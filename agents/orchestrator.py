@@ -15,6 +15,7 @@ import os
 import glob
 
 from .base_agent import BaseAgent, AgentEvent, EventType
+from .editor import EditorVerdict, EditorIssue
 
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
@@ -22,6 +23,17 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from config import OUTPUT_DIR, MAX_EDITOR_ITERATIONS, AGENT_MODELS
 from session_logger import SessionLogger
 from mcp_server.tools import get_all_tools, get_tools_for_topic, get_tools_description_for_prompt
+
+
+# ============================================================================
+# KONSTANTEN FÜR SMART EDITOR-ROUTING
+# ============================================================================
+
+# Maximale Anzahl an Nachrecherche-Runden nach Editor-Feedback
+MAX_FOLLOWUP_RESEARCH_ROUNDS = 3
+
+# Maximale Editor-Iterationen (um Endlosschleifen zu verhindern)
+MAX_SMART_EDITOR_ITERATIONS = 2
 
 
 ORCHESTRATOR_SYSTEM_PROMPT = """Du bist der Orchestrator eines Multi-Agenten-Systems zur Erstellung von Wissensartikeln.
@@ -273,6 +285,183 @@ class OrchestratorAgent(BaseAgent):
         self.researcher = researcher
         self.writer = writer
         self.editor = editor
+    
+    # =========================================================================
+    # SMART EDITOR-ROUTING METHODEN
+    # =========================================================================
+    
+    def _evaluate_editor_feedback(self, verdict: EditorVerdict) -> Dict[str, Any]:
+        """
+        Entscheidet basierend auf Editor-Verdict, wie fortgefahren wird.
+        
+        Returns:
+            {
+                "action": "approved|revise|research",
+                "research_rounds": [...],  # Falls action=research
+                "reasoning": "..."
+            }
+        """
+        # Wenn approved -> fertig
+        if verdict.verdict == "approved":
+            return {
+                "action": "approved",
+                "research_rounds": [],
+                "reasoning": verdict.summary or "Artikel genehmigt"
+            }
+        
+        # Prüfe ob Nachrecherche nötig
+        content_gaps = [
+            issue for issue in verdict.issues 
+            if issue.type == "content_gap" and issue.suggested_action == "research"
+        ]
+        
+        if content_gaps and verdict.verdict == "research":
+            # Erstelle gezielte Recherche-Runden
+            research_rounds = []
+            for i, gap in enumerate(content_gaps[:MAX_FOLLOWUP_RESEARCH_ROUNDS]):
+                # Tool basierend auf Gap-Typ wählen
+                tool = self._select_tool_for_gap(gap)
+                query = gap.research_query or gap.description
+                research_rounds.append(ResearchRound(
+                    name=f"Nachrecherche: {gap.description[:40]}...",
+                    focus=gap.description,
+                    search_query=query,
+                    tool=tool,
+                    enabled=True
+                ))
+            
+            return {
+                "action": "research",
+                "research_rounds": research_rounds,
+                "reasoning": f"{len(content_gaps)} inhaltliche Lücken gefunden, gezielte Nachrecherche"
+            }
+        
+        # Default: Revision durch Writer
+        return {
+            "action": "revise",
+            "research_rounds": [],
+            "reasoning": verdict.summary or "Stilistische/strukturelle Verbesserungen nötig"
+        }
+    
+    def _select_tool_for_gap(self, gap: EditorIssue) -> str:
+        """Wählt das beste Tool für eine bestimmte Wissenslücke"""
+        query_lower = (gap.research_query or gap.description).lower()
+        
+        # Heuristiken für Tool-Auswahl
+        if any(kw in query_lower for kw in ["cost", "price", "pricing", "kosten", "lizenz", "preis"]):
+            return "tavily"
+        if any(kw in query_lower for kw in ["research", "study", "paper", "wissenschaft", "studie", "forschung"]):
+            return "semantic_scholar"
+        if any(kw in query_lower for kw in ["preprint", "arxiv", "ml", "machine learning", "neural", "ai model"]):
+            return "arxiv"
+        if any(kw in query_lower for kw in ["news", "aktuell", "2024", "2025", "2026", "trend"]):
+            return "gnews"
+        if any(kw in query_lower for kw in ["ausschreibung", "vergabe", "öffentlich", "behörde", "eu"]):
+            return "ted"
+        if any(kw in query_lower for kw in ["developer", "erfahrung", "review", "meinung", "community"]):
+            return "hackernews"
+        if any(kw in query_lower for kw in ["definition", "grundlage", "konzept", "was ist"]):
+            return "wikipedia"
+        
+        return "tavily"  # Default
+    
+    def _run_followup_research(
+        self, 
+        rounds: List[ResearchRound],
+        start_round_num: int,
+        core_question: str
+    ) -> Generator[AgentEvent, None, List[str]]:
+        """
+        Führt gezielte Nachrecherche-Runden durch.
+        
+        Args:
+            rounds: Liste der Recherche-Runden
+            start_round_num: Startnummer für die Runden-Bezeichnung
+            core_question: Die ursprüngliche Kernfrage
+            
+        Yields:
+            AgentEvents
+            
+        Returns:
+            Liste der Recherche-Ergebnisse
+        """
+        results = []
+        
+        for i, round_config in enumerate(rounds):
+            round_num = start_round_num + i
+            
+            # Tool-Icon für die Anzeige
+            tool_icons = {
+                "tavily": "🌐", "wikipedia": "📚", "gnews": "📰", 
+                "hackernews": "🔶", "semantic_scholar": "🎓", 
+                "arxiv": "📄", "ted": "🏛️"
+            }
+            tool_icon = tool_icons.get(round_config.tool, "🔍")
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content=f"{tool_icon} Nachrecherche {i+1}/{len(rounds)}: {round_config.name} [{round_config.tool}]"
+            )
+            
+            # Logging: Nachrecherche-Schritt starten
+            step_idx = self.logger.start_step(
+                agent="Researcher",
+                model=self.researcher.model,
+                provider=self.researcher.provider,
+                tier=self.researcher.tier,
+                action=f"followup_research_{i+1}",
+                task=f"[{round_config.tool}] {round_config.search_query}"
+            )
+            
+            # Researcher zurücksetzen und Tool setzen
+            self.researcher.reset()
+            self.researcher.set_tool(round_config.tool)
+            
+            # Researcher aufrufen
+            result = ""
+            tokens = None
+            tool_calls = []
+            
+            context = {"core_question": core_question}
+            
+            for event in self.researcher.research(round_config.search_query, context):
+                yield event
+                if event.event_type == EventType.RESPONSE:
+                    result = event.content
+                if event.event_type == EventType.TOOL_CALL:
+                    tool_calls.append(event.data.get("tool", "unknown"))
+                if event.data.get("tokens"):
+                    tokens = event.data["tokens"]
+            
+            # Logging: Schritt beenden
+            if result and len(result) > 50:
+                results.append(f"### Nachrecherche {i+1}: {round_config.name}\n\n{result}")
+                self.logger.end_step(
+                    step_idx,
+                    status="success",
+                    tokens=tokens,
+                    tool_calls=tool_calls,
+                    result_length=len(result)
+                )
+                yield AgentEvent(
+                    event_type=EventType.STATUS,
+                    agent_name=self.name,
+                    content=f"✅ Nachrecherche {i+1} abgeschlossen: {len(result)} Zeichen"
+                )
+            else:
+                self.logger.end_step(
+                    step_idx,
+                    status="error",
+                    error="Keine ausreichenden Ergebnisse"
+                )
+                yield AgentEvent(
+                    event_type=EventType.ERROR,
+                    agent_name=self.name,
+                    content=f"⚠️ Nachrecherche {i+1} lieferte wenig Ergebnisse"
+                )
+        
+        return results
     
     def analyze_topic(self, question: str) -> Generator[AgentEvent, None, ResearchPlan]:
         """
@@ -632,109 +821,246 @@ Die Recherche-Ergebnisse sind STRUKTURIERT:
                 result_length=len(article)
             )
             
-            # ===== PHASE 3: EDITOR REVIEW (wenn aktiviert im Plan) =====
+            # ===== PHASE 3: SMART EDITOR REVIEW (wenn aktiviert im Plan) =====
             if plan.use_editor and self.editor:
-                yield AgentEvent(
-                    event_type=EventType.STATUS,
-                    agent_name=self.name,
-                    content="📝 Editor prüft Artikel..."
-                )
+                editor_iteration = 0
+                current_research = all_research
                 
-                # Logging: Editor-Schritt starten
-                editor_step = self.logger.start_step(
-                    agent="Editor",
-                    model=self.editor.model,
-                    provider=self.editor.provider,
-                    tier=self.editor.tier,
-                    action="review",
-                    task="Prüfe Artikel auf Qualität"
-                )
-                
-                self.editor.reset()
-                
-                editor_context = {
-                    "core_question": core_question,
-                    "article": article
-                }
-                
-                editor_task = f"""Prüfe den folgenden Wissensartikel auf Qualität:
+                while editor_iteration < MAX_SMART_EDITOR_ITERATIONS:
+                    editor_iteration += 1
+                    
+                    yield AgentEvent(
+                        event_type=EventType.STATUS,
+                        agent_name=self.name,
+                        content=f"📝 Editor prüft Artikel (Iteration {editor_iteration})..."
+                    )
+                    
+                    # Logging: Editor-Schritt starten
+                    editor_step = self.logger.start_step(
+                        agent="Editor",
+                        model=self.editor.model,
+                        provider=self.editor.provider,
+                        tier=self.editor.tier,
+                        action=f"review_iteration_{editor_iteration}",
+                        task="Prüfe Artikel auf Qualität"
+                    )
+                    
+                    self.editor.reset()
+                    
+                    editor_context = {
+                        "core_question": core_question,
+                        "article": article
+                    }
+                    
+                    editor_task = f"""Prüfe den folgenden Wissensartikel auf Qualität:
 
 1. Ist der Artikel relevant zur Kernfrage?
 2. Ist er gut strukturiert?
 3. Sind die Informationen korrekt und vollständig?
 4. Gibt es Verbesserungsvorschläge?
 
-Gib konstruktives Feedback."""
+Gib konstruktives Feedback und VERGISS NICHT das strukturierte JSON am Ende!"""
 
-                editor_feedback = ""
-                editor_tokens = None
-                for event in self.editor.run(editor_task, editor_context):
-                    yield event
-                    if event.event_type == EventType.RESPONSE:
-                        editor_feedback = event.content
-                    if event.data.get("tokens"):
-                        editor_tokens = event.data["tokens"]
-                
-                self.editor_feedback = editor_feedback
-                
-                # Logging: Editor-Schritt beenden
-                self.logger.end_step(
-                    editor_step,
-                    status="success",
-                    tokens=editor_tokens,
-                    result_length=len(editor_feedback)
-                )
-                
-                # Wenn Editor Feedback gibt, Writer nochmal aufrufen
-                if editor_feedback and len(editor_feedback) > 100:
+                    editor_feedback = ""
+                    editor_tokens = None
+                    for event in self.editor.run(editor_task, editor_context):
+                        yield event
+                        if event.event_type == EventType.RESPONSE:
+                            editor_feedback = event.content
+                        if event.data.get("tokens"):
+                            editor_tokens = event.data["tokens"]
+                    
+                    self.editor_feedback = editor_feedback
+                    
+                    # Logging: Editor-Schritt beenden
+                    self.logger.end_step(
+                        editor_step,
+                        status="success",
+                        tokens=editor_tokens,
+                        result_length=len(editor_feedback)
+                    )
+                    
+                    # NEU: Strukturiertes Verdict parsen
+                    verdict = EditorVerdict.from_response(editor_feedback)
+                    
                     yield AgentEvent(
                         event_type=EventType.STATUS,
                         agent_name=self.name,
-                        content="✍️ Writer überarbeitet Artikel basierend auf Editor-Feedback..."
+                        content=f"🔍 Editor-Verdict: {verdict.verdict.upper()} (Konfidenz: {verdict.confidence:.0%}, {len(verdict.issues)} Issues)",
+                        data={
+                            "verdict": verdict.to_dict(),
+                            "iteration": editor_iteration
+                        }
                     )
                     
-                    # Logging: Revision-Schritt starten
-                    revision_step = self.logger.start_step(
-                        agent="Writer",
-                        model=self.writer.model,
-                        provider=self.writer.provider,
-                        tier=self.writer.tier,
-                        action="revision",
-                        task="Überarbeite Artikel basierend auf Editor-Feedback"
+                    # Logging: Editor-Entscheidung
+                    self.logger.log_event({
+                        "type": "editor_verdict",
+                        "iteration": editor_iteration,
+                        "verdict": verdict.verdict,
+                        "confidence": verdict.confidence,
+                        "issues_count": len(verdict.issues),
+                        "has_content_gaps": verdict.has_content_gaps()
+                    })
+                    
+                    # NEU: Orchestrator entscheidet basierend auf Verdict
+                    decision = self._evaluate_editor_feedback(verdict)
+                    
+                    yield AgentEvent(
+                        event_type=EventType.STATUS,
+                        agent_name=self.name,
+                        content=f"🎯 Orchestrator-Entscheidung: {decision['action'].upper()} - {decision['reasoning']}"
                     )
                     
-                    self.writer.reset()
+                    # ========== ACTION: APPROVED ==========
+                    if decision["action"] == "approved":
+                        yield AgentEvent(
+                            event_type=EventType.STATUS,
+                            agent_name=self.name,
+                            content="✅ Artikel vom Editor genehmigt!"
+                        )
+                        break  # Fertig!
                     
-                    revision_context = {
-                        "core_question": core_question,
-                        "research_results": all_research,
-                        "editor_feedback": editor_feedback,
-                        "original_article": article
-                    }
+                    # ========== ACTION: RESEARCH ==========
+                    elif decision["action"] == "research" and decision["research_rounds"]:
+                        yield AgentEvent(
+                            event_type=EventType.STATUS,
+                            agent_name=self.name,
+                            content=f"🔍 Starte Nachrecherche: {len(decision['research_rounds'])} gezielte Runden"
+                        )
+                        
+                        # Gezielte Nachrecherche durchführen
+                        followup_results = []
+                        for event_or_result in self._run_followup_research(
+                            decision["research_rounds"],
+                            start_round_num=len(active_rounds) + 1,
+                            core_question=core_question
+                        ):
+                            if isinstance(event_or_result, AgentEvent):
+                                yield event_or_result
+                            elif isinstance(event_or_result, list):
+                                followup_results = event_or_result
+                        
+                        # Erweiterte Recherche-Ergebnisse zusammenführen
+                        if followup_results:
+                            additional_research = "\n\n---\n\n## Nachrecherche (Editor-Anforderung)\n\n" + "\n\n".join(followup_results)
+                            current_research = all_research + additional_research
+                            self.research_results.extend(followup_results)
+                        
+                        # Writer mit erweitertem Kontext aufrufen
+                        yield AgentEvent(
+                            event_type=EventType.STATUS,
+                            agent_name=self.name,
+                            content="✍️ Writer überarbeitet Artikel mit Nachrecherche-Ergebnissen..."
+                        )
+                        
+                        # Logging: Revision mit Nachrecherche
+                        revision_step = self.logger.start_step(
+                            agent="Writer",
+                            model=self.writer.model,
+                            provider=self.writer.provider,
+                            tier=self.writer.tier,
+                            action=f"revision_with_research_{editor_iteration}",
+                            task="Überarbeite Artikel mit Nachrecherche-Ergebnissen"
+                        )
+                        
+                        self.writer.reset()
+                        
+                        revision_context = {
+                            "core_question": core_question,
+                            "research_results": current_research,
+                            "editor_feedback": editor_feedback,
+                            "original_article": article
+                        }
+                        
+                        revision_task = f"""Überarbeite den Artikel basierend auf dem Editor-Feedback UND den neuen Recherche-Ergebnissen.
+
+Editor-Feedback:
+{editor_feedback}
+
+NEUE Recherche-Ergebnisse (nutze diese zur Behebung der Wissenslücken!):
+{additional_research if followup_results else "(keine neuen Ergebnisse)"}
+
+Verbessere den Artikel entsprechend und integriere die neuen Informationen."""
+
+                        revision_tokens = None
+                        for event in self.writer.run(revision_task, revision_context):
+                            yield event
+                            if event.event_type == EventType.RESPONSE:
+                                article = event.content
+                            if event.data.get("tokens"):
+                                revision_tokens = event.data["tokens"]
+                        
+                        self.article_result = article
+                        
+                        self.logger.end_step(
+                            revision_step,
+                            status="success",
+                            tokens=revision_tokens,
+                            result_length=len(article)
+                        )
                     
-                    revision_task = f"""Überarbeite den Artikel basierend auf dem Editor-Feedback.
+                    # ========== ACTION: REVISE ==========
+                    else:  # "revise" - nur stilistische/strukturelle Änderungen
+                        yield AgentEvent(
+                            event_type=EventType.STATUS,
+                            agent_name=self.name,
+                            content="✍️ Writer überarbeitet Artikel (keine Nachrecherche nötig)..."
+                        )
+                        
+                        # Logging: Revision-Schritt starten
+                        revision_step = self.logger.start_step(
+                            agent="Writer",
+                            model=self.writer.model,
+                            provider=self.writer.provider,
+                            tier=self.writer.tier,
+                            action=f"revision_{editor_iteration}",
+                            task="Überarbeite Artikel basierend auf Editor-Feedback"
+                        )
+                        
+                        self.writer.reset()
+                        
+                        revision_context = {
+                            "core_question": core_question,
+                            "research_results": current_research,
+                            "editor_feedback": editor_feedback,
+                            "original_article": article
+                        }
+                        
+                        revision_task = f"""Überarbeite den Artikel basierend auf dem Editor-Feedback.
 
 Editor-Feedback:
 {editor_feedback}
 
 Verbessere den Artikel entsprechend."""
 
-                    revision_tokens = None
-                    for event in self.writer.run(revision_task, revision_context):
-                        yield event
-                        if event.event_type == EventType.RESPONSE:
-                            article = event.content
-                        if event.data.get("tokens"):
-                            revision_tokens = event.data["tokens"]
-                    
-                    self.article_result = article
-                    
-                    # Logging: Revision-Schritt beenden
-                    self.logger.end_step(
-                        revision_step,
-                        status="success",
-                        tokens=revision_tokens,
-                        result_length=len(article)
+                        revision_tokens = None
+                        for event in self.writer.run(revision_task, revision_context):
+                            yield event
+                            if event.event_type == EventType.RESPONSE:
+                                article = event.content
+                            if event.data.get("tokens"):
+                                revision_tokens = event.data["tokens"]
+                        
+                        self.article_result = article
+                        
+                        # Logging: Revision-Schritt beenden
+                        self.logger.end_step(
+                            revision_step,
+                            status="success",
+                            tokens=revision_tokens,
+                            result_length=len(article)
+                        )
+                        
+                        # Nach "revise" beenden wir den Loop (keine weitere Editor-Iteration)
+                        break
+                
+                # Warnung wenn Max-Iterationen erreicht
+                if editor_iteration >= MAX_SMART_EDITOR_ITERATIONS:
+                    yield AgentEvent(
+                        event_type=EventType.STATUS,
+                        agent_name=self.name,
+                        content=f"⚠️ Max. Editor-Iterationen ({MAX_SMART_EDITOR_ITERATIONS}) erreicht, finalisiere Artikel..."
                     )
             
             # ===== PHASE 4: SPEICHERN & FERTIG =====

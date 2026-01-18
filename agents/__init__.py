@@ -5,10 +5,11 @@ Multi-Agent System für Wissensartikel-Erstellung.
 """
 
 from .base_agent import BaseAgent, AgentEvent, EventType
-from .orchestrator import OrchestratorAgent
+# Editor MUSS vor Orchestrator importiert werden (Orchestrator braucht EditorVerdict)
+from .editor import EditorAgent, EditorVerdict, EditorIssue
 from .researcher import ResearcherAgent
 from .writer import WriterAgent
-from .editor import EditorAgent
+from .orchestrator import OrchestratorAgent
 from .logging import AgentLogger, create_logger, get_logger
 
 __all__ = [
@@ -19,6 +20,8 @@ __all__ = [
     "ResearcherAgent",
     "WriterAgent",
     "EditorAgent",
+    "EditorVerdict",
+    "EditorIssue",
     "AgentLogger",
     "create_logger",
     "get_logger"

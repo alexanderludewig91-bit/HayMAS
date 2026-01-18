@@ -84,6 +84,36 @@ export interface ResearchToolInfo {
   topic_types: string[];
 }
 
+// ============================================================================
+// EDITOR VERDICT TYPES (Smart Editor-Routing)
+// ============================================================================
+
+export type EditorVerdictType = 'approved' | 'revise' | 'research';
+export type EditorIssueType = 'style' | 'structure' | 'content_gap' | 'factual_error';
+export type IssueSeverity = 'minor' | 'major' | 'critical';
+
+export interface EditorIssue {
+  type: EditorIssueType;
+  description: string;
+  severity: IssueSeverity;
+  suggested_action: 'revise' | 'research';
+  research_query?: string;
+}
+
+export interface EditorVerdict {
+  verdict: EditorVerdictType;
+  confidence: number;
+  issues: EditorIssue[];
+  summary: string;
+  raw_feedback: string;
+}
+
+export interface OrchestratorDecision {
+  action: 'approved' | 'revise' | 'research';
+  research_rounds: ResearchRound[];
+  reasoning: string;
+}
+
 // Legacy - wird noch für Rückwärtskompatibilität gebraucht
 export interface GenerationOptions {
   researchRounds: number;  // 1-5

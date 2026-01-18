@@ -148,6 +148,29 @@ class SessionLogger:
             self.log.timeline[step_index].tool_calls.append(tool_name)
             self._save()
     
+    def log_event(self, event_data: Dict[str, Any]):
+        """
+        Loggt ein beliebiges Event (z.B. Editor-Verdict, Orchestrator-Entscheidung).
+        Wird als separater Eintrag in der Timeline gespeichert.
+        """
+        # Events als spezieller AgentStep mit action="event"
+        event_step = AgentStep(
+            timestamp=datetime.now().isoformat(),
+            agent="System",
+            model="",
+            provider="",
+            tier="",
+            action="event",
+            task=event_data.get("type", "unknown_event"),
+            status="success"
+        )
+        # Event-Daten als JSON-String in error-Feld speichern (misuse, aber funktional)
+        # Besser wäre ein eigenes Feld, aber das erfordert Schema-Änderung
+        event_step.error = json.dumps(event_data, ensure_ascii=False)
+        
+        self.log.timeline.append(event_step)
+        self._save()
+    
     def complete(
         self,
         article_path: Optional[str] = None,

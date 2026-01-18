@@ -64,10 +64,28 @@ Orchestrator soll komplexere, adaptive Workflows erstellen können.
 | ✅ | Modell-Empfehlungen | Orchestrator empfiehlt Premium/Budget pro Agent |
 | ✅ | **Dynamische Rundenzahl** | 2-3 (simple), 4-5 (medium), 6-8 (complex) |
 | ✅ | **Tool-Diversität** | Orchestrator nutzt verschiedene Tools pro Runde (nie 3x gleiches Tool) |
+| ✅ | **Smart Editor-Routing** | Editor-Feedback führt zu gezielter Nachrecherche statt nur Writer-Revision |
 | ⬜ | Parallele Suchen | Mehrere Tools gleichzeitig pro Runde nutzen |
 | ⬜ | Conditional Rounds | Runden nur ausführen wenn Bedingung erfüllt (z.B. "wenn keine Daten → andere Quelle") |
-| ⬜ | Sub-Recherchen | Bei Wissenslücken automatisch Nachrecherche triggern |
 | ⬜ | Tool-Chaining | Output von Tool A als Input für Tool B (z.B. Wikipedia → dann Deep-Dive mit Tavily) |
+
+### Smart Editor-Routing (NEU!) ✅
+
+Der Editor gibt strukturiertes Feedback mit JSON-Verdict. Der Orchestrator entscheidet dynamisch:
+
+```
+Editor → Orchestrator entscheidet:
+  ├─→ "approved" → Artikel fertig!
+  ├─→ "revise" → Writer überarbeitet (Stil/Struktur)
+  └─→ "research" → Gezielte Nachrecherche → dann Writer
+```
+
+**Features:**
+- Editor identifiziert `content_gap` Issues mit konkretem `research_query`
+- Orchestrator wählt passendes Tool für Nachrecherche (z.B. "Kosten" → tavily, "Forschung" → semantic_scholar)
+- Max. 3 Nachrecherche-Runden pro Editor-Iteration
+- Max. 2 Editor-Iterationen (Endlosschleifen-Schutz)
+- Frontend zeigt Editor-Verdict visuell an (✅ Genehmigt / ✏️ Überarbeitung / 🔍 Nachrecherche)
 
 ---
 
@@ -202,6 +220,7 @@ Nicht "1 Klick → 15 Seiten", sondern iterativer Prozess:
 | 2026-01-18 | **Neues Tool:** Semantic Scholar für wissenschaftliche Paper (200M+ Papers) |
 | 2026-01-18 | **Neues Tool:** arXiv für Preprints (ML, KI, CS, Physik) |
 | 2026-01-18 | **Neues Tool:** TED API für EU-Ausschreibungen (perfekt für Verwaltung!) |
+| 2026-01-18 | **🚀 Smart Editor-Routing:** Editor-Feedback führt zu gezielter Nachrecherche statt nur Writer-Revision |
 
 ---
 
