@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+
+# Environment Variables (API Keys!)
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs (optional - auskommentieren falls Logs versioniert werden sollen)
+logs/
+
+# Output (optional - auskommentieren falls Output versioniert werden soll)
+output/
+
+# Test/Debug
+*.log
+console.log
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# mypy / pytest
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/

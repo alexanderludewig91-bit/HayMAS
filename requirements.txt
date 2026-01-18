@@ -1,0 +1,27 @@
+# HayMAS - Multi-Agenten-System Dependencies
+
+# Web Framework (API)
+fastapi>=0.109.0
+uvicorn>=0.27.0
+
+# Web-UI (Legacy)
+streamlit>=1.28.0
+
+# LLM APIs
+anthropic>=0.18.0
+openai>=1.12.0
+google-genai>=0.3.0
+
+# Research Tools
+tavily-python>=0.3.0      # Web-Suche (kostenpflichtig)
+gnews>=0.3.0              # Google News (kostenlos)
+httpx>=0.26.0             # Async HTTP für Wikipedia, Hacker News
+
+# PPT-Generierung
+python-pptx>=0.6.21
+
+# Umgebungsvariablen
+python-dotenv>=1.0.0
+
+# Async Support
+aiohttp>=3.9.0
