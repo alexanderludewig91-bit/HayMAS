@@ -30,6 +30,7 @@ class AgentStep:
     status: str = "started"  # started, success, error
     result_length: Optional[int] = None
     error: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None  # Für Event-Details (z.B. Editor-Verdict)
 
 
 @dataclass
@@ -162,11 +163,9 @@ class SessionLogger:
             tier="",
             action="event",
             task=event_data.get("type", "unknown_event"),
-            status="success"
+            status="success",
+            details=event_data  # Event-Daten im korrekten Feld speichern
         )
-        # Event-Daten als JSON-String in error-Feld speichern (misuse, aber funktional)
-        # Besser wäre ein eigenes Feld, aber das erfordert Schema-Änderung
-        event_step.error = json.dumps(event_data, ensure_ascii=False)
         
         self.log.timeline.append(event_step)
         self._save()
