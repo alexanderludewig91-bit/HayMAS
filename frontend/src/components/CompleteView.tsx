@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Plus, CheckCircle, FileText } from 'lucide-react';
+import { Download, Plus, CheckCircle, FileText, FileDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { LogDrawer } from './LogDrawer';
 import { getArticleLog, type SessionLog } from '../lib/api';
@@ -14,6 +14,7 @@ export function CompleteView({ articleContent, articlePath, onReset }: CompleteV
   const [logDrawerOpen, setLogDrawerOpen] = useState(false);
   const [log, setLog] = useState<SessionLog | null>(null);
   const [logLoading, setLogLoading] = useState(false);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
 
   const handleDownload = () => {
     if (!articleContent) return;
@@ -35,6 +36,33 @@ export function CompleteView({ articleContent, articlePath, onReset }: CompleteV
       const fetchedLog = await getArticleLog(filename);
       setLog(fetchedLog);
       setLogLoading(false);
+    }
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!articlePath) return;
+
+    setPdfGenerating(true);
+
+    try {
+      const filename = articlePath.split('/').pop() || 'artikel.md';
+      const response = await fetch(`http://localhost:8000/api/articles/${filename}/pdf`);
+      
+      if (!response.ok) {
+        throw new Error('PDF-Generierung fehlgeschlagen');
+      }
+      
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename.replace('.md', '.pdf');
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('PDF-Generierung fehlgeschlagen:', error);
+    } finally {
+      setPdfGenerating(false);
     }
   };
 
@@ -73,7 +101,15 @@ export function CompleteView({ articleContent, articlePath, onReset }: CompleteV
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-neutral-200 rounded-lg hover:bg-neutral-50 transition-colors disabled:opacity-50"
           >
             <Download size={16} />
-            Download
+            Markdown
+          </button>
+          <button
+            onClick={handleDownloadPDF}
+            disabled={!articlePath || pdfGenerating}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-emerald-200 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 transition-colors disabled:opacity-50"
+          >
+            <FileDown size={16} className={pdfGenerating ? 'animate-pulse' : ''} />
+            {pdfGenerating ? 'Generiere...' : 'PDF'}
           </button>
         </div>
       </div>

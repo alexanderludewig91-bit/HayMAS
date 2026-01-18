@@ -7,12 +7,14 @@ import os
 import sys
 import json
 import glob
+import io
 from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
+from fpdf import FPDF
 
 sys.path.append(os.path.dirname(__file__))
 
@@ -204,6 +206,269 @@ def get_article_log(filename: str):
         raise HTTPException(status_code=404, detail="Log nicht gefunden")
     
     return log
+
+
+class MarkdownPDF(FPDF):
+    """PDF-Generator mit Markdown-Unterstützung."""
+    
+    LEFT_MARGIN = 10
+    RIGHT_MARGIN = 10
+    TEXT_WIDTH = 190  # A4 = 210mm - 2*10mm margins
+    
+    def __init__(self):
+        super().__init__()
+        self.set_margins(self.LEFT_MARGIN, 15, self.RIGHT_MARGIN)
+        self.add_page()
+        self.set_auto_page_break(auto=True, margin=25)
+        
+    def header(self):
+        pass
+        
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Helvetica', 'I', 9)
+        self.set_text_color(128, 128, 128)
+        self.cell(0, 10, f'Seite {self.page_no()}', align='C')
+    
+    def _reset_x(self):
+        """X-Position auf linken Rand zuruecksetzen."""
+        self.set_x(self.LEFT_MARGIN)
+        
+    def render_markdown(self, md_text: str):
+        """Markdown-Text zu PDF rendern."""
+        lines = md_text.split('\n')
+        in_code_block = False
+        
+        for line in lines:
+            stripped = line.strip()
+            self._reset_x()  # Immer X zuruecksetzen
+            
+            # Code-Block Start/Ende
+            if stripped.startswith('```'):
+                in_code_block = not in_code_block
+                if in_code_block:
+                    self.ln(3)
+                continue
+                
+            # Code-Block Inhalt
+            if in_code_block:
+                self.set_font('Courier', '', 8)
+                self.set_fill_color(245, 245, 245)
+                clean_line = self._clean_text(line) if line.strip() else ' '
+                self.multi_cell(self.TEXT_WIDTH, 4, clean_line, fill=True)
+                continue
+            
+            # Leere Zeilen
+            if not stripped:
+                self.ln(3)
+                continue
+                
+            # H1
+            if stripped.startswith('# '):
+                self.ln(5)
+                self.set_font('Helvetica', 'B', 18)
+                self.set_text_color(17, 17, 17)
+                text = self._clean_text(stripped[2:])
+                self.multi_cell(self.TEXT_WIDTH, 9, text)
+                self.set_draw_color(51, 51, 51)
+                self.line(self.LEFT_MARGIN, self.get_y(), self.LEFT_MARGIN + self.TEXT_WIDTH, self.get_y())
+                self.ln(5)
+                continue
+                
+            # H2
+            if stripped.startswith('## '):
+                self.ln(6)
+                self.set_font('Helvetica', 'B', 14)
+                self.set_text_color(34, 34, 34)
+                text = self._clean_text(stripped[3:])
+                self.multi_cell(self.TEXT_WIDTH, 7, text)
+                self.ln(2)
+                continue
+                
+            # H3
+            if stripped.startswith('### '):
+                self.ln(4)
+                self.set_font('Helvetica', 'B', 12)
+                self.set_text_color(51, 51, 51)
+                text = self._clean_text(stripped[4:])
+                self.multi_cell(self.TEXT_WIDTH, 6, text)
+                self.ln(2)
+                continue
+                
+            # H4
+            if stripped.startswith('#### '):
+                self.ln(3)
+                self.set_font('Helvetica', 'B', 11)
+                self.set_text_color(68, 68, 68)
+                text = self._clean_text(stripped[5:])
+                self.multi_cell(self.TEXT_WIDTH, 5, text)
+                self.ln(1)
+                continue
+                
+            # Horizontale Linie
+            if stripped in ['---', '***', '___']:
+                self.ln(5)
+                self.set_draw_color(200, 200, 200)
+                self.line(self.LEFT_MARGIN, self.get_y(), self.LEFT_MARGIN + self.TEXT_WIDTH, self.get_y())
+                self.ln(5)
+                continue
+                
+            # Ungeordnete Liste
+            if stripped.startswith('- ') or stripped.startswith('* '):
+                self.set_font('Helvetica', '', 10)
+                self.set_text_color(64, 64, 64)
+                text = self._clean_text(stripped[2:])
+                self.cell(8, 5, '-')
+                self.multi_cell(self.TEXT_WIDTH - 8, 5, text)
+                continue
+                
+            # Geordnete Liste (1. 2. etc.)
+            if len(stripped) > 2 and stripped[0].isdigit() and '.' in stripped[:4]:
+                self.set_font('Helvetica', '', 10)
+                self.set_text_color(64, 64, 64)
+                dot_pos = stripped.find('.')
+                num = stripped[:dot_pos]
+                text = self._clean_text(stripped[dot_pos+1:].strip())
+                self.cell(10, 5, f"{num}.")
+                self.multi_cell(self.TEXT_WIDTH - 10, 5, text)
+                continue
+                
+            # Blockquote
+            if stripped.startswith('>'):
+                self.set_font('Helvetica', 'I', 10)
+                self.set_text_color(85, 85, 85)
+                text = self._clean_text(stripped[1:].strip())
+                self.cell(5, 5, '|')
+                self.multi_cell(self.TEXT_WIDTH - 5, 5, text)
+                continue
+                
+            # Normaler Paragraph
+            self.set_font('Helvetica', '', 10)
+            self.set_text_color(26, 26, 26)
+            text = self._clean_text(stripped)
+            if text:  # Nur wenn Text vorhanden
+                self.multi_cell(self.TEXT_WIDTH, 5, text)
+            
+    def _clean_text(self, text: str) -> str:
+        """Markdown-Formatierung entfernen und Text ASCII-kompatibel machen."""
+        import re
+        import unicodedata
+        
+        # Bold und Italic entfernen
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        text = re.sub(r'\*(.+?)\*', r'\1', text)
+        text = re.sub(r'__(.+?)__', r'\1', text)
+        text = re.sub(r'_(.+?)_', r'\1', text)
+        # Inline Code
+        text = re.sub(r'`(.+?)`', r'\1', text)
+        # Links: [text](url) -> text
+        text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+        
+        # Alle Arten von Anführungszeichen normalisieren
+        text = re.sub(r'[""„‟«»\u201c\u201d\u201e\u201f\u00ab\u00bb]', '"', text)
+        text = re.sub(r'[''‚‛\u2018\u2019\u201a\u201b]', "'", text)
+        
+        # Striche normalisieren
+        text = re.sub(r'[–—‒―\u2013\u2014\u2012\u2015]', '-', text)
+        
+        # Punkte und Bullets
+        text = re.sub(r'[…\u2026]', '...', text)
+        text = re.sub(r'[•·●○■□▪▫★☆\u2022\u00b7\u25cf\u25cb\u25a0\u25a1]', '-', text)
+        
+        # Pfeile
+        text = re.sub(r'[→⇒➔➜►\u2192\u21d2]', '->', text)
+        text = re.sub(r'[←⇐◄\u2190\u21d0]', '<-', text)
+        
+        # Häkchen
+        text = re.sub(r'[✓✔☑\u2713\u2714]', '[x]', text)
+        text = re.sub(r'[✗✘☐\u2717\u2718]', '[ ]', text)
+        
+        # Mathematische Symbole
+        text = text.replace('×', 'x')
+        text = text.replace('÷', '/')
+        text = text.replace('±', '+/-')
+        text = text.replace('≈', '~')
+        text = text.replace('≠', '!=')
+        text = text.replace('≤', '<=')
+        text = text.replace('≥', '>=')
+        text = text.replace('∞', 'oo')
+        
+        # Symbole
+        text = text.replace('™', '(TM)')
+        text = text.replace('®', '(R)')
+        text = text.replace('©', '(c)')
+        text = text.replace('€', 'EUR')
+        text = text.replace('°', ' Grad')
+        
+        # Unicode-Normalisierung (NFKD zerlegt Zeichen)
+        text = unicodedata.normalize('NFKD', text)
+        
+        # Nur ASCII-Zeichen behalten + deutsche Umlaute manuell ersetzen
+        result = []
+        for char in text:
+            if ord(char) < 128:
+                result.append(char)
+            elif char in 'äöüÄÖÜß':
+                # Umlaute durch Umschreibungen ersetzen
+                umlaut_map = {'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 
+                             'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss'}
+                result.append(umlaut_map[char])
+            elif char in 'éèêëáàâãåæçíìîïñóòôõøúùûýÿ':
+                # Akzentbuchstaben vereinfachen
+                accent_map = {'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+                             'á': 'a', 'à': 'a', 'â': 'a', 'ã': 'a', 'å': 'a', 'æ': 'ae',
+                             'ç': 'c', 'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+                             'ñ': 'n', 'ó': 'o', 'ò': 'o', 'ô': 'o', 'õ': 'o', 'ø': 'o',
+                             'ú': 'u', 'ù': 'u', 'û': 'u', 'ý': 'y', 'ÿ': 'y'}
+                result.append(accent_map.get(char, ''))
+            elif char in 'ÉÈÊËÁÀÂÃÅÆÇÍÌÎÏÑÓÒÔÕØÚÙÛÝ':
+                accent_map = {'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
+                             'Á': 'A', 'À': 'A', 'Â': 'A', 'Ã': 'A', 'Å': 'A', 'Æ': 'AE',
+                             'Ç': 'C', 'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
+                             'Ñ': 'N', 'Ó': 'O', 'Ò': 'O', 'Ô': 'O', 'Õ': 'O', 'Ø': 'O',
+                             'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ý': 'Y'}
+                result.append(accent_map.get(char, ''))
+            # Andere Zeichen ignorieren
+        
+        return ''.join(result)
+
+
+@app.get("/api/articles/{filename}/pdf")
+def get_article_pdf(filename: str):
+    """
+    Artikel als PDF herunterladen.
+    
+    Konvertiert die Markdown-Datei direkt zu PDF.
+    """
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Artikel nicht gefunden")
+    
+    # Markdown laden
+    with open(filepath, "r", encoding="utf-8") as f:
+        md_content = f.read()
+    
+    # PDF generieren
+    pdf = MarkdownPDF()
+    pdf.render_markdown(md_content)
+    
+    # PDF in BytesIO schreiben
+    pdf_buffer = io.BytesIO()
+    pdf_output = pdf.output()
+    pdf_buffer.write(pdf_output)
+    pdf_buffer.seek(0)
+    
+    # PDF-Dateiname
+    pdf_filename = filename.replace('.md', '.pdf')
+    
+    return Response(
+        content=pdf_buffer.read(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{pdf_filename}"'
+        }
+    )
 
 
 @app.get("/api/logs")
