@@ -9,6 +9,7 @@ from .base_agent import BaseAgent, AgentEvent, EventType
 from .editor import EditorAgent, EditorVerdict, EditorIssue
 from .researcher import ResearcherAgent
 from .writer import WriterAgent
+from .draft_writer import DraftWriterAgent
 from .orchestrator import OrchestratorAgent
 from .logging import AgentLogger, create_logger, get_logger
 
@@ -19,6 +20,7 @@ __all__ = [
     "OrchestratorAgent",
     "ResearcherAgent",
     "WriterAgent",
+    "DraftWriterAgent",
     "EditorAgent",
     "EditorVerdict",
     "EditorIssue",

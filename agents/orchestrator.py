@@ -1129,3 +1129,392 @@ Verbessere den Artikel entsprechend."""
             f.write(content)
         
         return filepath
+    
+    # =========================================================================
+    # VERIFIED DEEP THINKING FLOW (NEU!)
+    # =========================================================================
+    
+    def process_article_deep(
+        self,
+        core_question: str,
+        use_verification: bool = True,
+        tiers: Dict[str, str] = None
+    ) -> Generator[AgentEvent, None, Dict[str, Any]]:
+        """
+        NEUER FLOW: Verified Deep Thinking
+        
+        Nutzt das LLM-Wissen ZUERST, recherchiert dann GEZIELT für:
+        - Fakten die verifiziert werden muessen
+        - Unsichere Stellen
+        - Aktuelle Informationen
+        - Aussagen die Quellen brauchen
+        """
+        from .draft_writer import DraftWriterAgent
+        
+        self.reset()
+        self.research_results = []
+        self.article_result = None
+        self.editor_feedback = None
+        self.core_question = core_question
+        
+        # Logger initialisieren
+        self.logger = SessionLogger(
+            question=core_question,
+            settings={
+                "mode": "verified_deep_thinking",
+                "use_verification": use_verification,
+                "tiers": tiers or {}
+            }
+        )
+        
+        try:
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content="🧠 Starte Verified Deep Thinking Flow..."
+            )
+            
+            # ===== PHASE 1: DRAFT MIT LLM-WISSEN =====
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content="📝 Phase 1: LLM erstellt Expertenentwurf mit eigenem Wissen..."
+            )
+            
+            draft_writer = DraftWriterAgent(tier=tiers.get("writer", "premium") if tiers else "premium")
+            
+            step_idx = self.logger.start_step(
+                agent="DraftWriter",
+                model=draft_writer.model,
+                provider=draft_writer.provider,
+                tier=draft_writer.tier,
+                action="create_draft",
+                task=f"Erstelle Expertenentwurf zu: {core_question[:100]}..."
+            )
+            
+            draft = ""
+            draft_tokens = None
+            for event in draft_writer.create_draft(core_question):
+                yield event
+                if event.event_type == EventType.RESPONSE:
+                    draft = event.content
+                if event.data.get("tokens"):
+                    draft_tokens = event.data["tokens"]
+            
+            # Markierungen extrahieren
+            markers = draft_writer.extract_markers(draft)
+            marker_counts = draft_writer.count_markers(draft)
+            total_markers = sum(marker_counts.values())
+            
+            self.logger.end_step(
+                step_idx,
+                status="success",
+                tokens=draft_tokens,
+                result_length=len(draft)
+            )
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content=f"✅ Entwurf erstellt: {len(draft)} Zeichen, {total_markers} Markierungen",
+                data={"marker_counts": marker_counts}
+            )
+            
+            # ===== PHASE 2: GEZIELTE RECHERCHE FÜR MARKIERUNGEN =====
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content=f"🔍 Phase 2: Gezielte Recherche fuer {total_markers} markierte Stellen..."
+            )
+            
+            research_results = []
+            research_tasks = []
+            
+            # [FACT-CHECK] -> Tavily fuer Faktenpruefung
+            for fact in markers.get("fact_check", [])[:5]:
+                research_tasks.append({"type": "fact_check", "query": fact, "tool": "tavily"})
+            
+            # [RECHERCHE] -> Passendes Tool waehlen
+            for topic in markers.get("recherche", [])[:5]:
+                tool = self._select_tool_for_marker(topic)
+                research_tasks.append({"type": "recherche", "query": topic, "tool": tool})
+            
+            # [QUELLE] -> Semantic Scholar oder Tavily
+            for claim in markers.get("quelle", [])[:3]:
+                research_tasks.append({
+                    "type": "quelle", 
+                    "query": claim, 
+                    "tool": "semantic_scholar" if self._is_academic(claim) else "tavily"
+                })
+            
+            # [UNSICHER] -> Wikipedia fuer Grundlagen
+            for topic in markers.get("unsicher", [])[:3]:
+                research_tasks.append({"type": "unsicher", "query": topic, "tool": "wikipedia"})
+            
+            # Recherchen durchfuehren
+            for i, task in enumerate(research_tasks, 1):
+                tool_icons = {"tavily": "🌐", "wikipedia": "📚", "gnews": "📰", 
+                              "hackernews": "🔶", "semantic_scholar": "🎓", "arxiv": "📄"}
+                icon = tool_icons.get(task["tool"], "🔍")
+                
+                yield AgentEvent(
+                    event_type=EventType.STATUS,
+                    agent_name=self.name,
+                    content=f"{icon} Recherche {i}/{len(research_tasks)}: [{task['type']}] {task['query'][:50]}..."
+                )
+                
+                step_idx = self.logger.start_step(
+                    agent="Researcher",
+                    model=self.researcher.model,
+                    provider=self.researcher.provider,
+                    tier=self.researcher.tier,
+                    action=f"targeted_research_{task['type']}",
+                    task=f"[{task['tool']}] {task['query']}"
+                )
+                
+                self.researcher.reset()
+                self.researcher.set_tool(task["tool"])
+                
+                result = ""
+                tokens = None
+                for event in self.researcher.research(task["query"], {"core_question": core_question}):
+                    yield event
+                    if event.event_type == EventType.RESPONSE:
+                        result = event.content
+                    if event.data.get("tokens"):
+                        tokens = event.data["tokens"]
+                
+                if result and len(result) > 50:
+                    research_results.append({
+                        "type": task["type"],
+                        "query": task["query"],
+                        "result": result
+                    })
+                    self.logger.end_step(step_idx, status="success", tokens=tokens, result_length=len(result))
+                else:
+                    self.logger.end_step(step_idx, status="error", error="Wenig Ergebnisse")
+            
+            # Recherche zusammenfassen
+            research_text = "\n\n---\n\n".join([
+                f"## {r['type'].upper()}: {r['query']}\n\n{r['result']}"
+                for r in research_results
+            ])
+            
+            self.research_results = [r["result"] for r in research_results]
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content=f"✅ {len(research_results)} Recherchen abgeschlossen"
+            )
+            
+            # ===== PHASE 3: INTEGRATION =====
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content="✍️ Phase 3: Writer integriert Recherche in Entwurf..."
+            )
+            
+            step_idx = self.logger.start_step(
+                agent="Writer",
+                model=self.writer.model,
+                provider=self.writer.provider,
+                tier=self.writer.tier,
+                action="integrate_research",
+                task="Integriere Recherche-Ergebnisse in Entwurf"
+            )
+            
+            self.writer.reset()
+            
+            integration_context = {
+                "core_question": core_question,
+                "draft": draft,
+                "research_results": research_text
+            }
+            
+            integration_task = """## ARTIKEL-INTEGRATION
+
+### Deine Aufgabe:
+Du hast einen EXPERTENENTWURF basierend auf LLM-Wissen und RECHERCHE-ERGEBNISSE zur Verifizierung.
+
+### Was du tun sollst:
+1. **Ersetze alle [FACT-CHECK:], [RECHERCHE:], [QUELLE:], [UNSICHER:] Markierungen**
+   - Nutze die Recherche-Ergebnisse um die Stellen zu verifizieren/ergaenzen
+   - Fuege konkrete Quellen als Fussnoten [1], [2], etc. ein
+   
+2. **Behalte die Staerken des Entwurfs:**
+   - Die tiefe Expertise und Zusammenhaenge
+   - Die logische Struktur
+   - Die Fachsprache und Erklaerungen
+
+3. **Ergaenze aus den Recherchen:**
+   - Aktuelle Daten und Fakten
+   - Verifizierte Zahlen
+   - Konkrete Beispiele mit Quellen
+
+4. **Fuege ein Quellenverzeichnis am Ende hinzu:**
+   ## Quellen
+   - [1] Titel - URL
+   - [2] Titel - URL
+
+### WICHTIG:
+- Der Artikel soll mindestens so gut sein wie der Entwurf
+- Alle Markierungen muessen ersetzt werden
+- Jede wichtige Aussage sollte eine Quelle haben
+- Schreibe auf Expertenniveau
+
+BEGINNE MIT DEM FINALEN ARTIKEL:"""
+
+            article = ""
+            writer_tokens = None
+            for event in self.writer.run(integration_task, integration_context):
+                yield event
+                if event.event_type == EventType.RESPONSE:
+                    article = event.content
+                if event.data.get("tokens"):
+                    writer_tokens = event.data["tokens"]
+            
+            self.article_result = article
+            
+            self.logger.end_step(step_idx, status="success", tokens=writer_tokens, result_length=len(article))
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content=f"✅ Artikel integriert: {len(article)} Zeichen"
+            )
+            
+            # ===== PHASE 4: VERIFICATION (Optional) =====
+            if use_verification and self.editor:
+                yield AgentEvent(
+                    event_type=EventType.STATUS,
+                    agent_name=self.name,
+                    content="🔬 Phase 4: Multi-LLM Verification..."
+                )
+                
+                step_idx = self.logger.start_step(
+                    agent="Editor",
+                    model=self.editor.model,
+                    provider=self.editor.provider,
+                    tier=self.editor.tier,
+                    action="verify_article",
+                    task="Verifiziere Artikel"
+                )
+                
+                self.editor.reset()
+                
+                editor_context = {
+                    "core_question": core_question,
+                    "article": article,
+                    "research_summary": research_text[:2000]
+                }
+                
+                verdict = None
+                editor_feedback = ""
+                for event in self.editor.review_article_structured(
+                    task="Pruefe den Artikel auf Vollstaendigkeit und Qualitaet.",
+                    context=editor_context
+                ):
+                    yield event
+                    if event.event_type == EventType.RESPONSE:
+                        editor_feedback = event.content
+                    if event.data and isinstance(event.data, dict) and "verdict" in event.data:
+                        verdict = EditorVerdict(
+                            verdict=event.data.get("verdict", "revise"),
+                            confidence=event.data.get("confidence", 0.5),
+                            issues=[],
+                            summary=event.data.get("summary", ""),
+                            raw_feedback=editor_feedback
+                        )
+                
+                self.logger.end_step(step_idx, status="success", result_length=len(editor_feedback))
+                
+                # Bei groesseren Problemen: Eine Ueberarbeitungsrunde
+                if verdict and verdict.verdict == "research":
+                    yield AgentEvent(
+                        event_type=EventType.STATUS,
+                        agent_name=self.name,
+                        content="⚠️ Editor empfiehlt Nachrecherche - fuehre eine Ueberarbeitungsrunde durch..."
+                    )
+                    
+                    self.writer.reset()
+                    revision_context = {
+                        "core_question": core_question,
+                        "original_article": article,
+                        "editor_feedback": editor_feedback
+                    }
+                    
+                    for event in self.writer.run(
+                        "Ueberarbeite den Artikel basierend auf dem Editor-Feedback.",
+                        revision_context
+                    ):
+                        yield event
+                        if event.event_type == EventType.RESPONSE:
+                            article = event.content
+                    
+                    self.article_result = article
+            
+            # ===== PHASE 5: SPEICHERN =====
+            article_path = self._save_article(article)
+            article_words = len(article.split())
+            
+            self.logger.complete(
+                article_path=article_path,
+                article_words=article_words
+            )
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name=self.name,
+                content=f"💾 Artikel gespeichert: {os.path.basename(article_path)}"
+            )
+            
+            yield AgentEvent(
+                event_type=EventType.RESPONSE,
+                agent_name=self.name,
+                content="✅ Verified Deep Thinking abgeschlossen!",
+                data={
+                    "article_path": article_path,
+                    "mode": "verified_deep_thinking",
+                    "markers_found": total_markers,
+                    "research_tasks": len(research_tasks),
+                    "article_length": len(article),
+                    "log_file": self.logger.get_log_filename()
+                }
+            )
+            
+            return {
+                "success": True,
+                "article_path": article_path,
+                "log_file": self.logger.get_log_filename(),
+                "mode": "verified_deep_thinking",
+                "summary": f"Artikel mit {len(article)} Zeichen aus {len(research_results)} gezielten Recherchen erstellt."
+            }
+            
+        except Exception as e:
+            if self.logger:
+                self.logger.error(str(e))
+            raise
+    
+    def _select_tool_for_marker(self, query: str) -> str:
+        """Waehlt das beste Tool fuer eine [RECHERCHE] Markierung."""
+        query_lower = query.lower()
+        
+        if any(kw in query_lower for kw in ["paper", "study", "research", "studie", "forschung"]):
+            return "semantic_scholar"
+        if any(kw in query_lower for kw in ["ai", "ki", "machine learning", "neural", "gpt", "llm"]):
+            return "arxiv"
+        if any(kw in query_lower for kw in ["news", "aktuell", "2024", "2025", "release"]):
+            return "gnews"
+        if any(kw in query_lower for kw in ["meinung", "erfahrung", "vergleich", "review"]):
+            return "hackernews"
+        if any(kw in query_lower for kw in ["behoerde", "verwaltung", "ausschreibung", "eu"]):
+            return "ted"
+        if any(kw in query_lower for kw in ["definition", "grundlagen", "was ist", "konzept"]):
+            return "wikipedia"
+        return "tavily"
+    
+    def _is_academic(self, claim: str) -> bool:
+        """Prueft ob eine Aussage akademische Quellen braucht."""
+        academic_keywords = ["prozent", "studie", "forschung", "wissenschaft", "laut", "statistik"]
+        return any(kw in claim.lower() for kw in academic_keywords)

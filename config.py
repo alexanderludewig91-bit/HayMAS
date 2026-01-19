@@ -135,6 +135,12 @@ AGENT_MODELS: Dict[str, AgentModelConfig] = {
         budget="claude-haiku-4-5",
         description="Prüft Qualität und gibt Feedback"
     ),
+    # NEU: Gemini-basierter Verifier für Multi-LLM Verification
+    "verifier": AgentModelConfig(
+        premium="gemini-3-pro",
+        budget="gemini-2.5-flash",
+        description="Cross-LLM Verification mit Gemini"
+    ),
 }
 
 def get_model_for_agent(agent_name: str, tier: Literal["premium", "budget"] = "premium") -> ModelConfig:

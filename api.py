@@ -93,6 +93,11 @@ class GenerateRequest(BaseModel):
     # Legacy-Parameter (werden ignoriert wenn plan gegeben)
     research_rounds: Optional[int] = None
     use_editor: Optional[bool] = None
+    # NEU: Modus-Auswahl
+    # "standard" = alter Flow (Recherche zuerst)
+    # "deep" = Deep Thinking (LLM-Wissen zuerst) - DEPRECATED
+    # "evidence" = Evidence-Gated (Claim-basiert) - EMPFOHLEN!
+    mode: Optional[str] = "evidence"
 
 
 # ============================================================================
@@ -536,15 +541,35 @@ def generate_article(request: GenerateRequest):
     Artikel generieren mit Server-Sent Events.
     
     Unterstützt drei Modi:
-    1. Auto-Modus: Keine plan/research_rounds → Orchestrator analysiert selbst
-    2. Plan-Modus: plan gegeben → Verwendet den benutzerdefinierten Plan
-    3. Legacy-Modus: research_rounds gegeben → Verwendet Standard-Templates
+    1. evidence (DEFAULT): Evidence-Gated Flow - Claim-basiert, wissenschaftlich
+    2. standard: Alter Flow (Recherche zuerst)
+    3. deep: Deep Thinking (DEPRECATED)
     """
     
     tiers = request.tiers or {}
+    mode = request.mode or "evidence"
     
     def event_stream():
         try:
+            # ========== EVIDENCE-GATED MODE (NEU - DEFAULT) ==========
+            if mode == "evidence":
+                from evidence_gated.orchestrator import EvidenceGatedOrchestrator
+                
+                eg_orchestrator = EvidenceGatedOrchestrator(tiers=tiers)
+                
+                for event in eg_orchestrator.process(request.question):
+                    event_data = {
+                        "type": event.event_type.value,
+                        "agent": event.agent_name,
+                        "content": event.content,
+                        "data": event.data
+                    }
+                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                
+                yield "data: [DONE]\n\n"
+                return
+            
+            # ========== STANDARD/DEEP MODE (Legacy) ==========
             # Agents erstellen
             orchestrator = OrchestratorAgent(tier=tiers.get("orchestrator", "premium"))
             researcher = ResearcherAgent(tier=tiers.get("researcher", "premium"))
@@ -553,6 +578,26 @@ def generate_article(request: GenerateRequest):
             
             orchestrator.set_agents(researcher, writer, editor)
             
+            # ========== DEEP THINKING MODE (DEPRECATED) ==========
+            if mode == "deep":
+                # Neuer Flow: LLM-Wissen zuerst, dann gezielte Recherche
+                for event in orchestrator.process_article_deep(
+                    core_question=request.question,
+                    use_verification=True,  # Multi-LLM Verification
+                    tiers=tiers
+                ):
+                    event_data = {
+                        "type": event.event_type.value,
+                        "agent": event.agent_name,
+                        "content": event.content,
+                        "data": event.data
+                    }
+                    yield f"data: {json.dumps(event_data, ensure_ascii=False)}\n\n"
+                
+                yield "data: [DONE]\n\n"
+                return
+            
+            # ========== STANDARD MODE ==========
             # Plan konvertieren falls gegeben
             research_plan = None
             if request.plan:
@@ -577,7 +622,7 @@ def generate_article(request: GenerateRequest):
                     model_recommendations=request.plan.model_recommendations or {}  # NEU
                 )
             
-            # Generierung starten
+            # Generierung starten (Standard-Flow)
             for event in orchestrator.process_article(
                 core_question=request.question,
                 plan=research_plan,
