@@ -59,7 +59,7 @@ print("🟡 GEMINI API TEST")
 print("=" * 60)
 try:
     import google.generativeai as genai
-    genai.configure(api_key="AIzaSyDV9vjUq9GTRq7uKm92WEWL_VfsW_8FSmM")
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     
     print("Verfügbare Gemini Modelle für Content-Generierung:")
     for model in genai.list_models():

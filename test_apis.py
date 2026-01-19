@@ -77,8 +77,8 @@ print("=" * 50)
 try:
     import google.generativeai as genai
     
-    # Gemini Key direkt setzen
-    genai.configure(api_key="AIzaSyDV9vjUq9GTRq7uKm92WEWL_VfsW_8FSmM")
+    # Gemini Key aus Umgebungsvariable
+    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
     
     # Liste verfügbare Modelle
     print("Verfügbare Gemini Modelle:")
