@@ -4,6 +4,26 @@ Geplante Features und Verbesserungen für das Multi-Agenten-System.
 
 ---
 
+## 🔴 PRIORITÄT: Evidence-Gated Flow Fixes
+
+Diese Issues müssen als nächstes behoben werden!
+
+| Status | Issue | Beschreibung | Auswirkung |
+|--------|-------|--------------|------------|
+| ⬜ | **ClaimMiner JSON-Parsing** | Claude liefert manchmal kein valides JSON → Fallback mit 0 Claims | Artikel ohne Quellen! |
+| ⬜ | **Gemini-Verifikation** | Phase 8 sollte Cross-LLM Verification mit Gemini haben | Keine Halluzinations-Prüfung |
+| ⬜ | **Independence Score** | C-Claims brauchen 2+ **unabhängige** Quellen (nicht vom selben Publisher) | Quellenvielfalt nicht garantiert |
+| ⬜ | **Claim Coverage Tracking** | Prüfen ob alle Claims im Artikel vorkommen | Claims können fehlen |
+| ⬜ | **Halluzinations-Check** | Prüfen ob Writer Fakten ohne Quellen erfunden hat | Erfundene Quellen möglich |
+| ⬜ | **Modell-Fallbacks** | Graceful Fallback wenn Modell nicht verfügbar | API-Fehler bei unbekanntem Modell |
+
+### Nächste Schritte:
+1. **ClaimMiner robuster machen** - JSON-Parsing mit Fallback verbessern
+2. **Gemini für Verification einbauen** - Cross-LLM Check in Phase 8
+3. **Halluzinations-Detection** - Writer-Output gegen ClaimRegister prüfen
+
+---
+
 ## 🔧 Legende
 
 - ⬜ Offen

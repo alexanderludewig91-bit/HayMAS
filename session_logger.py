@@ -117,7 +117,8 @@ class SessionLogger:
         tokens: Optional[Dict[str, int]] = None,
         tool_calls: List[str] = None,
         result_length: Optional[int] = None,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
     ):
         """Beendet einen Schritt mit Ergebnis"""
         if step_index >= len(self.log.timeline):
@@ -135,6 +136,7 @@ class SessionLogger:
         step.tool_calls = tool_calls or []
         step.result_length = result_length
         step.error = error
+        step.details = details
         
         # Token-Summe aktualisieren
         if tokens:

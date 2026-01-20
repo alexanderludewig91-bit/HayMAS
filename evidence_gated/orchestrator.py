@@ -2,6 +2,7 @@
 Evidence-Gated Orchestrator
 
 Koordiniert den gesamten Evidence-Gated Workflow.
+Mit vollständigem Step-Logging und dynamischer Modellauswahl.
 """
 
 import os
@@ -15,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from agents.base_agent import AgentEvent, EventType, BaseAgent
 from session_logger import SessionLogger
-from config import OUTPUT_DIR
+from config import OUTPUT_DIR, AGENT_MODELS, AVAILABLE_MODELS, get_model_for_agent
 from mcp_server.server import get_mcp_server
 
 from .models import (
@@ -30,8 +31,7 @@ class EvidenceGatedOrchestrator:
     """
     Orchestriert den Evidence-Gated Workflow.
     
-    Vereinfachte Version die direkt LLM-Aufrufe macht statt
-    komplexe Generator-Ketten.
+    Mit dynamischer Modellauswahl basierend auf Tiers.
     """
     
     MAX_GAP_LOOPS = 2
@@ -47,7 +47,109 @@ class EvidenceGatedOrchestrator:
         self.claim_register: Optional[ClaimRegister] = None
         self.evidence_packs: Dict[str, EvidencePack] = {}
         self.article: str = ""
+        self.source_index: Dict[str, int] = {}  # URL -> Nummer für konsistente Referenzierung
     
+    def _get_model(self, agent_type: str) -> tuple[str, str]:
+        """
+        Gibt Modellname und Provider für einen Agent-Typ zurück.
+        
+        Args:
+            agent_type: 'orchestrator', 'researcher', 'writer', 'editor', 'verifier'
+        
+        Returns:
+            (model_name, provider)
+        """
+        tier = self.tiers.get(agent_type, self.tiers.get("writer", "premium"))
+        
+        # Mapping: Evidence-Gated Agent -> Config Agent Type
+        type_mapping = {
+            "claim_miner": "orchestrator",  # Kritische Analyse -> Orchestrator-Modell
+            "writer": "writer",
+            "editor": "editor",
+            "verifier": "verifier",
+        }
+        
+        config_type = type_mapping.get(agent_type, agent_type)
+        
+        try:
+            model_config = get_model_for_agent(config_type, tier)
+            return model_config.name, model_config.provider
+        except KeyError:
+            # Fallback
+            if tier == "premium":
+                return "claude-sonnet-4-5", "anthropic"
+            return "gpt-4o", "openai"
+    
+
+    def _parse_json_robust(self, text: str, context: str = "") -> dict:
+        """
+        Robustes JSON-Parsing mit mehreren Fallback-Strategien.
+        
+        Strategien:
+        1. ```json ... ``` Block
+        2. ``` ... ``` Block (ohne json Tag)
+        3. Erstes { ... } im Text finden
+        4. Text bereinigen und erneut versuchen
+        """
+        import json
+        import re
+        
+        strategies = []
+        
+        # Strategie 1: ```json ... ``` Block
+        match1 = re.search(r'```json\s*([\s\S]*?)```', text)
+        if match1:
+            strategies.append(("json_block", match1.group(1).strip()))
+        
+        # Strategie 2: ``` ... ``` Block (ohne json)
+        match2 = re.search(r'```\s*([\s\S]*?)```', text)
+        if match2:
+            strategies.append(("code_block", match2.group(1).strip()))
+        
+        # Strategie 3: Erstes { ... } finden (greedy für verschachtelte Objekte)
+        # Finde die Position des ersten {
+        first_brace = text.find('{')
+        if first_brace != -1:
+            # Zähle Klammern um das Ende zu finden
+            depth = 0
+            end_pos = first_brace
+            for i, char in enumerate(text[first_brace:], start=first_brace):
+                if char == '{':
+                    depth += 1
+                elif char == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end_pos = i + 1
+                        break
+            if end_pos > first_brace:
+                strategies.append(("brace_match", text[first_brace:end_pos]))
+        
+        # Strategie 4: Ganzer Text (falls es reines JSON ist)
+        strategies.append(("raw_text", text.strip()))
+        
+        # Versuche alle Strategien
+        last_error = None
+        for strategy_name, json_str in strategies:
+            try:
+                data = json.loads(json_str)
+                # Erfolg! Logge welche Strategie funktioniert hat
+                if strategy_name != "json_block":
+                    print(f"[{context}] JSON parsed mit Strategie: {strategy_name}")
+                return data
+            except json.JSONDecodeError as e:
+                last_error = e
+                continue
+        
+        # Alle Strategien fehlgeschlagen
+        # Logge die ersten 500 Zeichen für Debugging
+        preview = text[:500].replace('\n', '\\n')
+        print(f"[{context}] JSON-Parsing FEHLGESCHLAGEN!")
+        print(f"[{context}] Text-Preview: {preview}...")
+        print(f"[{context}] Letzter Fehler: {last_error}")
+        
+        raise ValueError(f"Konnte JSON nicht parsen: {last_error}")
+
+
     def process(
         self,
         question: str
@@ -113,6 +215,9 @@ class EvidenceGatedOrchestrator:
             
             yield from self._phase_5_rating()
             
+            # ===== Quellen-Index aufbauen für konsistente Referenzierung =====
+            self._build_source_index()
+            
             # ===== PHASE 6: Claim-Bounded Writing =====
             yield AgentEvent(
                 event_type=EventType.STATUS,
@@ -122,14 +227,55 @@ class EvidenceGatedOrchestrator:
             
             self.article = yield from self._phase_6_writing()
             
-            # ===== PHASE 7: Editorial Review =====
+            # ===== PHASE 7: Editorial Review mit Loop =====
             yield AgentEvent(
                 event_type=EventType.STATUS,
                 agent_name="Orchestrator",
                 content="📋 Phase 7/8: Editorial Review..."
             )
             
-            # Vereinfacht: Kein Review-Loop für jetzt
+            # Review-Loop (max. 2 Revisionen)
+            max_revisions = 2
+            for revision_round in range(max_revisions + 1):
+                verdict = yield from self._phase_7_editorial_review(revision_round)
+                
+                if verdict.verdict == "approved":
+                    yield AgentEvent(
+                        event_type=EventType.STATUS,
+                        agent_name="Editor",
+                        content=f"✅ Artikel genehmigt (Konfidenz: {verdict.confidence:.0%})"
+                    )
+                    break
+                    
+                elif verdict.verdict == "research" and verdict.has_content_gaps():
+                    # Nachrecherche für Lücken
+                    if revision_round < max_revisions:
+                        yield AgentEvent(
+                            event_type=EventType.STATUS,
+                            agent_name="Editor",
+                            content=f"🔍 Nachrecherche erforderlich..."
+                        )
+                        yield from self._handle_research_gaps(verdict)
+                        # Danach Revision
+                        self.article = yield from self._revise_article(verdict)
+                    
+                elif verdict.verdict == "revise":
+                    if revision_round < max_revisions:
+                        yield AgentEvent(
+                            event_type=EventType.STATUS,
+                            agent_name="Editor",
+                            content=f"✏️ Revision {revision_round + 1}/{max_revisions}..."
+                        )
+                        self.article = yield from self._revise_article(verdict)
+                    else:
+                        yield AgentEvent(
+                            event_type=EventType.STATUS,
+                            agent_name="Editor",
+                            content=f"⚠️ Max. Revisionen erreicht, fahre fort..."
+                        )
+                else:
+                    # Unbekanntes Verdict, weitermachen
+                    break
             
             # ===== PHASE 8: Final Verification =====
             yield AgentEvent(
@@ -185,11 +331,17 @@ class EvidenceGatedOrchestrator:
             raise
     
     def _phase_1_2_claim_mining(self, question: str) -> Generator[AgentEvent, None, ClaimRegister]:
-        """Phase 1-2: Erstellt ClaimRegister mit LLM."""
-        from anthropic import Anthropic
-        from config import ANTHROPIC_API_KEY
+        """Phase 1-2: Erstellt ClaimRegister mit dynamischer Modellauswahl."""
         
-        client = Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Dynamische Modellauswahl
+        model_name, provider = self._get_model("claim_miner")
+        tier = self.tiers.get("orchestrator", "premium")
+        
+        yield AgentEvent(
+            event_type=EventType.STATUS,
+            agent_name="ClaimMiner",
+            content=f"⛏️ Mining Claims mit {model_name}..."
+        )
         
         prompt = f"""Du bist ein Claim Mining Agent für wissenschaftliche Artikel.
 
@@ -198,8 +350,8 @@ FRAGE: {question}
 AUFGABE: Erstelle ein ClaimRegister mit:
 1. QuestionBrief (präzisierte Frage)
 2. TermMap (Synonyme, Suchvarianten, Negative Keywords)
-3. Outline (Gliederung für 12 Seiten)
-4. Claims (MINDESTENS 15 Claims, davon MINDESTENS 5 C-Claims!)
+3. Outline (Gliederung für 12-15 Seiten)
+4. Claims (MINDESTENS 20 Claims, davon MINDESTENS 7 C-Claims!)
 
 CLAIM-TYPEN:
 - definition: "X ist ..."
@@ -215,11 +367,11 @@ EVIDENZKLASSEN:
 - B: 1 gute Quelle
 - C: 2+ unabhängige Quellen (für Zahlen, aktuelle Fakten!)
 
-WICHTIG:
-- MINDESTENS 15 Claims!
-- MINDESTENS 5 C-Claims!
+WICHTIGE STRUKTUR-ANFORDERUNGEN:
+- Sektion 1 MUSS "Executive Summary / Management Summary" sein (2-3 Claims)
+- Jede weitere Sektion sollte 2-4 Claims haben
+- MINDESTENS 8 Sektionen für einen 12-15 Seiten Artikel
 - Jeder B/C-Claim braucht ein retrieval_ticket mit 2-3 Queries!
-- Nutze verschiedene Suchvarianten (auch Englisch)!
 
 OUTPUT: NUR JSON, kein anderer Text!
 
@@ -244,7 +396,8 @@ OUTPUT: NUR JSON, kein anderer Text!
   }},
   "outline": {{
     "sections": [
-      {{"number": "1", "title": "...", "goal": "...", "expected_claim_ids": ["C-01"], "estimated_pages": 1.0}}
+      {{"number": "1", "title": "Executive Summary", "goal": "Kernaussagen kompakt", "expected_claim_ids": ["C-01", "C-02"], "estimated_pages": 1.0}},
+      {{"number": "2", "title": "...", "goal": "...", "expected_claim_ids": ["C-03", "C-04", "C-05"], "estimated_pages": 1.5}}
     ]
   }},
   "claims": [
@@ -264,7 +417,7 @@ OUTPUT: NUR JSON, kein anderer Text!
       "freshness_required": true,
       "section_id": "2",
       "retrieval_ticket": {{
-        "queries": ["Query 1", "Query 2"],
+        "queries": ["Query 1", "Query 2", "Query 3"],
         "min_sources": 2
       }}
     }}
@@ -272,29 +425,51 @@ OUTPUT: NUR JSON, kein anderer Text!
 }}
 ```"""
 
-        yield AgentEvent(
-            event_type=EventType.STATUS,
-            agent_name="ClaimMiner",
-            content="⛏️ Mining Claims mit Claude..."
+        # === LOGGING: Start ClaimMiner Step ===
+        step_idx = self.logger.start_step(
+            agent="ClaimMiner",
+            model=model_name,
+            provider=provider,
+            tier=tier,
+            action="claim_mining",
+            task=f"Erstelle ClaimRegister für: {question[:80]}..."
         )
         
-        response = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=8000,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        result_text = response.content[0].text
-        
-        # JSON parsen
         try:
-            json_match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', result_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
+            # Provider-spezifischer API-Aufruf
+            if provider == "anthropic":
+                from anthropic import Anthropic
+                from config import ANTHROPIC_API_KEY
+                
+                client = Anthropic(api_key=ANTHROPIC_API_KEY)
+                response = client.messages.create(
+                    model=model_name,
+                    max_tokens=8000,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                result_text = response.content[0].text
+                tokens = {
+                    "input": response.usage.input_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.output_tokens if hasattr(response, 'usage') else 0
+                }
             else:
-                json_str = result_text.strip()
+                from openai import OpenAI
+                from config import OPENAI_API_KEY
+                
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=8000
+                )
+                result_text = response.choices[0].message.content
+                tokens = {
+                    "input": response.usage.prompt_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.completion_tokens if hasattr(response, 'usage') else 0
+                }
             
-            data = json.loads(json_str)
+            # JSON parsen - ROBUST mit mehreren Strategien
+            data = self._parse_json_robust(result_text, "ClaimMiner")
             
             # QuestionBrief
             qb_data = data.get("question_brief", {})
@@ -356,10 +531,26 @@ OUTPUT: NUR JSON, kein anderer Text!
                     retrieval_ticket=ticket
                 ))
             
+            # === LOGGING: End ClaimMiner Step (Success) ===
+            self.logger.end_step(
+                step_idx,
+                status="success",
+                tokens=tokens,
+                result_length=len(result_text),
+                details={
+                    "claims_count": len(claims),
+                    "a_claims": sum(1 for c in claims if c.evidence_class == EvidenceClass.A),
+                    "b_claims": sum(1 for c in claims if c.evidence_class == EvidenceClass.B),
+                    "c_claims": sum(1 for c in claims if c.evidence_class == EvidenceClass.C),
+                    "sections_count": len(sections),
+                    "model_used": model_name
+                }
+            )
+            
             yield AgentEvent(
                 event_type=EventType.STATUS,
                 agent_name="ClaimMiner",
-                content=f"✅ {len(claims)} Claims extrahiert"
+                content=f"✅ {len(claims)} Claims in {len(sections)} Sektionen extrahiert"
             )
             
             return ClaimRegister(
@@ -372,10 +563,17 @@ OUTPUT: NUR JSON, kein anderer Text!
             )
             
         except Exception as e:
+            # === LOGGING: End ClaimMiner Step (Error) ===
+            self.logger.end_step(
+                step_idx,
+                status="error",
+                error=str(e)
+            )
+            
             yield AgentEvent(
                 event_type=EventType.ERROR,
                 agent_name="ClaimMiner",
-                content=f"❌ Parsing-Fehler: {e}"
+                content=f"❌ Fehler: {e}"
             )
             # Fallback
             return ClaimRegister(
@@ -406,6 +604,19 @@ OUTPUT: NUR JSON, kein anderer Text!
             content=f"🔍 Recherche für {len(claims_needing_evidence)} Claims..."
         )
         
+        # === LOGGING: Start Retrieval Step ===
+        step_idx = self.logger.start_step(
+            agent="TargetedRetriever",
+            model="tool-based",
+            provider="mcp",
+            tier="standard",
+            action="targeted_retrieval",
+            task=f"Recherche für {len(claims_needing_evidence)} Claims"
+        )
+        
+        total_sources = 0
+        tools_used = []
+        
         for claim in claims_needing_evidence:
             if not claim.retrieval_ticket or not claim.retrieval_ticket.queries:
                 continue
@@ -418,6 +629,9 @@ OUTPUT: NUR JSON, kein anderer Text!
             
             # Tool auswählen
             tool = self._select_tool(claim)
+            if tool not in tools_used:
+                tools_used.append(tool)
+            
             sources = []
             
             for query in claim.retrieval_ticket.queries[:3]:
@@ -452,121 +666,327 @@ OUTPUT: NUR JSON, kein anderer Text!
                 status=status
             )
             
+            total_sources += len(sources)
+            
             yield AgentEvent(
                 event_type=EventType.STATUS,
                 agent_name="Retriever",
                 content=f"   {'✅' if status == ClaimStatus.FULFILLED else '⚠️'} {len(sources)} Quellen"
             )
+        
+        # === LOGGING: End Retrieval Step ===
+        fulfilled = sum(1 for p in self.evidence_packs.values() if p.status == ClaimStatus.FULFILLED)
+        self.logger.end_step(
+            step_idx,
+            status="success",
+            result_length=total_sources,
+            tool_calls=tools_used,
+            details={
+                "claims_processed": len(claims_needing_evidence),
+                "claims_fulfilled": fulfilled,
+                "total_sources": total_sources,
+                "tools_used": tools_used
+            }
+        )
     
     def _phase_5_rating(self) -> Generator[AgentEvent, None, None]:
         """Phase 5: Quellen bewerten."""
+        
+        # === LOGGING: Start Rating Step ===
+        step_idx = self.logger.start_step(
+            agent="EvidenceRater",
+            model="rule-based",
+            provider="internal",
+            tier="standard",
+            action="evidence_rating",
+            task="Bewerte Quellen nach Autorität und Unabhängigkeit"
+        )
+        
+        rated_count = 0
         for claim_id, pack in self.evidence_packs.items():
             for source in pack.sources:
                 # Einfache automatische Bewertung
+                is_vendor = any(vendor in source.url.lower() for vendor in ["servicenow.com", "microsoft.com", "google.com", "aws.amazon.com"])
                 source.rating = SourceRating(
-                    authority=2 if "servicenow.com" in source.url else 1,
-                    independence=1 if "servicenow.com" in source.url else 2,
+                    authority=2 if is_vendor else 1,
+                    independence=1 if is_vendor else 2,
                     recency=2,
                     specificity=2,
                     consensus=1
                 )
+                rated_count += 1
+        
+        # === LOGGING: End Rating Step ===
+        self.logger.end_step(
+            step_idx,
+            status="success",
+            result_length=rated_count,
+            details={"sources_rated": rated_count}
+        )
         
         yield AgentEvent(
             event_type=EventType.STATUS,
             agent_name="Rater",
-            content=f"✅ {sum(len(p.sources) for p in self.evidence_packs.values())} Quellen bewertet"
+            content=f"✅ {rated_count} Quellen bewertet"
         )
+    
+    def _build_source_index(self):
+        """
+        Baut einen konsistenten Quellen-Index auf.
+        Jede URL bekommt eine eindeutige Nummer für die Referenzierung.
+        """
+        self.source_index = {}
+        counter = 1
+        
+        for pack in self.evidence_packs.values():
+            for source in pack.sources:
+                if source.url not in self.source_index:
+                    self.source_index[source.url] = counter
+                    counter += 1
+    
+    def _get_sources_for_claim(self, claim_id: str) -> List[Dict[str, Any]]:
+        """
+        Gibt alle Quellen für einen Claim mit ihren Index-Nummern zurück.
+        """
+        pack = self.evidence_packs.get(claim_id)
+        if not pack:
+            return []
+        
+        sources = []
+        for source in pack.sources:
+            idx = self.source_index.get(source.url, 0)
+            sources.append({
+                "index": idx,
+                "title": source.title,
+                "publisher": source.publisher,
+                "url": source.url,
+                "extract": source.extract[:200]
+            })
+        return sources
     
     def _phase_6_writing(self) -> Generator[AgentEvent, None, str]:
-        """Phase 6: Artikel schreiben."""
-        from openai import OpenAI
-        from config import OPENAI_API_KEY
+        """Phase 6: Artikel schreiben mit korrekten Quellenverweisen."""
         
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        # Dynamische Modellauswahl
+        model_name, provider = self._get_model("writer")
+        tier = self.tiers.get("writer", "premium")
         
-        # Claims aufbereiten
-        usable_claims = []
+        yield AgentEvent(
+            event_type=EventType.STATUS,
+            agent_name="Writer",
+            content=f"✍️ Schreibe Artikel mit {model_name}..."
+        )
+        
+        # Claims mit echten Quellen aufbereiten
+        claims_with_sources = []
         for claim in self.claim_register.claims:
+            claim_data = {
+                "id": claim.claim_id,
+                "text": claim.claim_text,
+                "type": claim.claim_type.value,
+                "section": claim.section_id,
+                "sources": []
+            }
+            
             if claim.evidence_class == EvidenceClass.A:
-                usable_claims.append({"id": claim.claim_id, "text": claim.claim_text, "sources": []})
+                claim_data["evidence"] = "A (keine Quelle nötig)"
             else:
-                pack = self.evidence_packs.get(claim.claim_id)
-                if pack and pack.status == ClaimStatus.FULFILLED:
-                    sources = [f"[{i+1}]" for i in range(len(pack.sources))]
-                    usable_claims.append({"id": claim.claim_id, "text": claim.claim_text, "sources": sources})
+                sources = self._get_sources_for_claim(claim.claim_id)
+                if sources:
+                    claim_data["evidence"] = f"{claim.evidence_class.value} (belegt)"
+                    claim_data["sources"] = sources
+                else:
+                    claim_data["evidence"] = f"{claim.evidence_class.value} (NICHT BELEGT - vorsichtig formulieren!)"
+            
+            claims_with_sources.append(claim_data)
         
-        claims_text = "\n".join([
-            f"- {c['id']}: {c['text']}" + (f" (Quellen: {', '.join(c['sources'])})" if c['sources'] else "")
-            for c in usable_claims
-        ])
+        # Claims als formatierter Text
+        claims_text = ""
+        for c in claims_with_sources:
+            claims_text += f"\n### {c['id']} (Sektion {c['section']}, {c['evidence']})\n"
+            claims_text += f"Aussage: {c['text']}\n"
+            if c['sources']:
+                claims_text += "Quellen:\n"
+                for s in c['sources']:
+                    claims_text += f"  - [{s['index']}] {s['publisher']}: {s['title']}\n"
+                    claims_text += f"    URL: {s['url']}\n"
+                    claims_text += f"    Auszug: {s['extract']}...\n"
         
         # Outline
-        outline_text = "\n".join([
-            f"{s.number}. {s.title}"
-            for s in self.claim_register.outline.sections
-        ])
+        outline_text = ""
+        for s in self.claim_register.outline.sections:
+            outline_text += f"\n{s.number}. {s.title}\n"
+            outline_text += f"   Ziel: {s.goal}\n"
+            outline_text += f"   Claims: {', '.join(s.expected_claim_ids)}\n"
+            outline_text += f"   Umfang: ca. {s.estimated_pages} Seiten\n"
         
-        prompt = f"""Schreibe einen wissenschaftlichen Artikel.
+        prompt = f"""Du bist ein wissenschaftlicher Autor und schreibst einen Expertenartikel.
 
-FRAGE: {self.claim_register.question_brief.core_question}
+# KERNFRAGE
+{self.claim_register.question_brief.core_question}
 
-OUTLINE:
+# ARTIKEL-STRUKTUR (UNBEDINGT EINHALTEN!)
 {outline_text}
 
-VERWENDBARE CLAIMS (mit Claim-Anchors!):
+# VERWENDBARE CLAIMS MIT QUELLEN
 {claims_text}
 
-REGELN:
-1. Nutze Claim-Anchors: (C-01), (C-02), etc.
-2. Nutze Quellenverweise: [1], [2], etc.
-3. Schreibe auf Expertenniveau
-4. 10-15 Seiten Umfang
-5. Füge am Ende einen "Limitations" Abschnitt ein
+# STRIKTE SCHREIBREGELN
 
-SCHREIBE DEN ARTIKEL:"""
+## 1. Quellenverweise
+- Verwende NUR die Quellennummern [1], [2], [3] etc. wie oben angegeben
+- Setze Quellenverweise DIREKT nach der Aussage: "ServiceNow ist eine Cloud-Plattform [1]."
+- Bei mehreren Quellen: "Dies wird von mehreren Studien bestätigt [2][3][5]."
+- KEINE Claim-Anchors im Text! Die (C-01) etc. sind nur für dich zur Orientierung.
 
-        yield AgentEvent(
-            event_type=EventType.STATUS,
-            agent_name="Writer",
-            content="✍️ Schreibe Artikel mit GPT..."
+## 2. Artikellänge (KRITISCH!)
+- MINDESTENS 3000 Wörter (ca. 12-15 Seiten)
+- Executive Summary: 300-400 Wörter
+- Jedes Hauptkapitel: MINDESTENS 400-600 Wörter
+- Ausführliche Erklärungen, Beispiele, Kontext!
+
+## 3. Struktur
+- Beginne mit "# [Titel]"
+- Dann "## Executive Summary" (PFLICHT!)
+- Dann die weiteren Kapitel gemäß Outline
+- Jedes Kapitel mit "## [Nummer]. [Titel]"
+- Unterkapitel mit "### [Titel]" wenn sinnvoll
+
+## 4. Stil
+- Wissenschaftlich, aber verständlich
+- Konkrete Beispiele und Anwendungsfälle
+- Kritische Einordnung wo angebracht
+- Am Ende: "## Limitations" Abschnitt
+
+## 5. VERBOTEN
+- Keine erfundenen Fakten ohne Quelle
+- Keine Claim-Anchors (C-01) im finalen Text
+- Kein "laut Quelle X" - nutze [X] Notation
+- Keine Aufzählungen als Hauptinhalt - ausführliche Fließtexte!
+
+SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
+
+        # === LOGGING: Start Writer Step ===
+        step_idx = self.logger.start_step(
+            agent="ClaimBoundedWriter",
+            model=model_name,
+            provider=provider,
+            tier=tier,
+            action="article_writing",
+            task=f"Schreibe Artikel mit {len(claims_with_sources)} Claims"
         )
         
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=8000
-        )
-        
-        article = response.choices[0].message.content
-        
-        yield AgentEvent(
-            event_type=EventType.STATUS,
-            agent_name="Writer",
-            content=f"✅ Artikel: {len(article)} Zeichen"
-        )
-        
-        return article
+        try:
+            # Provider-spezifischer API-Aufruf
+            if provider == "openai":
+                from openai import OpenAI
+                from config import OPENAI_API_KEY
+                
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=12000  # Mehr Tokens für längeren Artikel
+                )
+                article = response.choices[0].message.content
+                tokens = {
+                    "input": response.usage.prompt_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.completion_tokens if hasattr(response, 'usage') else 0
+                }
+            else:
+                from anthropic import Anthropic
+                from config import ANTHROPIC_API_KEY
+                
+                client = Anthropic(api_key=ANTHROPIC_API_KEY)
+                response = client.messages.create(
+                    model=model_name,
+                    max_tokens=12000,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                article = response.content[0].text
+                tokens = {
+                    "input": response.usage.input_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.output_tokens if hasattr(response, 'usage') else 0
+                }
+            
+            word_count = len(article.split())
+            
+            # === LOGGING: End Writer Step (Success) ===
+            self.logger.end_step(
+                step_idx,
+                status="success",
+                tokens=tokens,
+                result_length=len(article),
+                details={
+                    "claims_provided": len(claims_with_sources),
+                    "article_chars": len(article),
+                    "article_words": word_count,
+                    "model_used": model_name
+                }
+            )
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name="Writer",
+                content=f"✅ Artikel: {word_count} Wörter, {len(article)} Zeichen"
+            )
+            
+            return article
+            
+        except Exception as e:
+            # === LOGGING: End Writer Step (Error) ===
+            self.logger.end_step(
+                step_idx,
+                status="error",
+                error=str(e)
+            )
+            raise
     
     def _add_bibliography(self) -> str:
-        """Fügt Literaturverzeichnis hinzu."""
-        all_sources = []
-        for pack in self.evidence_packs.values():
-            all_sources.extend(pack.sources)
+        """Fügt Literaturverzeichnis mit konsistenter Nummerierung hinzu."""
         
-        # Duplikate entfernen
-        seen = set()
-        unique = []
-        for s in all_sources:
-            if s.url not in seen:
-                seen.add(s.url)
-                unique.append(s)
+        # === LOGGING: Start Bibliography Step ===
+        step_idx = self.logger.start_step(
+            agent="BibliographyBuilder",
+            model="rule-based",
+            provider="internal",
+            tier="standard",
+            action="build_bibliography",
+            task="Erstelle Literaturverzeichnis"
+        )
         
-        if not unique:
+        if not self.source_index:
+            self.logger.end_step(step_idx, status="success", result_length=0)
             return self.article
         
-        bib = "\n\n## Literaturverzeichnis\n\n"
-        for i, s in enumerate(unique, 1):
-            bib += f"[{i}] {s.publisher}: {s.title}. {s.url}\n"
+        # Sortiere nach Index
+        sorted_sources = sorted(self.source_index.items(), key=lambda x: x[1])
+        
+        # Sammle Source-Details
+        url_to_source = {}
+        for pack in self.evidence_packs.values():
+            for source in pack.sources:
+                if source.url not in url_to_source:
+                    url_to_source[source.url] = source
+        
+        bib = "\n\n---\n\n## Literaturverzeichnis\n\n"
+        for url, idx in sorted_sources:
+            source = url_to_source.get(url)
+            if source:
+                bib += f"[{idx}] {source.publisher}: {source.title}. {url}\n\n"
+            else:
+                bib += f"[{idx}] {url}\n\n"
+        
+        # === LOGGING: End Bibliography Step ===
+        self.logger.end_step(
+            step_idx,
+            status="success",
+            result_length=len(sorted_sources),
+            details={
+                "unique_sources": len(sorted_sources),
+                "total_in_index": len(self.source_index)
+            }
+        )
         
         return self.article + bib
     
@@ -574,11 +994,11 @@ SCHREIBE DEN ARTIKEL:"""
         """Wählt Tool für Claim."""
         text = claim.claim_text.lower()
         
-        if any(kw in text for kw in ["studie", "forschung", "prozent"]):
+        if any(kw in text for kw in ["studie", "forschung", "prozent", "wissenschaft"]):
             return "semantic_scholar"
-        if any(kw in text for kw in ["release", "version", "2024", "2025"]):
+        if any(kw in text for kw in ["release", "version", "2024", "2025", "2026", "aktuell"]):
             return "gnews"
-        if any(kw in text for kw in ["erfahrung", "vergleich"]):
+        if any(kw in text for kw in ["erfahrung", "vergleich", "community", "entwickler"]):
             return "hackernews"
         
         return "tavily"
@@ -607,3 +1027,372 @@ SCHREIBE DEN ARTIKEL:"""
             f.write(self.article)
         
         return filepath
+    
+    # =========================================================================
+    # PHASE 7: Editorial Review
+    # =========================================================================
+    
+    def _phase_7_editorial_review(self, revision_round: int) -> Generator[AgentEvent, None, Any]:
+        """
+        Phase 7: Editor prüft den Artikel und gibt strukturiertes Feedback.
+        
+        Returns:
+            EditorVerdict mit verdict (approved/revise/research)
+        """
+        from agents.editor import EditorVerdict
+        
+        # Dynamische Modellauswahl
+        model_name, provider = self._get_model("editor")
+        tier = self.tiers.get("editor", "premium")
+        
+        yield AgentEvent(
+            event_type=EventType.STATUS,
+            agent_name="Editor",
+            content=f"🔍 Prüfe Artikel mit {model_name}..."
+        )
+        
+        # Statistiken für den Editor
+        word_count = len(self.article.split())
+        source_refs = len(re.findall(r'\[\d+\]', self.article))
+        has_exec_summary = "Executive Summary" in self.article or "Management Summary" in self.article
+        has_limitations = "Limitation" in self.article
+        
+        prompt = f"""Du bist ein kritischer Editor für wissenschaftliche Fachartikel.
+
+# ARTIKEL ZU PRÜFEN
+{self.article[:15000]}  # Erste 15000 Zeichen
+
+# ARTIKEL-STATISTIKEN
+- Wörter: {word_count}
+- Quellenverweise im Text: {source_refs}
+- Executive Summary vorhanden: {has_exec_summary}
+- Limitations-Abschnitt vorhanden: {has_limitations}
+
+# PRÜFKRITERIEN
+
+## 1. Länge (KRITISCH!)
+- MINDESTENS 2500 Wörter für einen vollständigen Artikel
+- Aktuell: {word_count} Wörter
+- Bei < 2500: verdict = "revise"
+
+## 2. Quellenreferenzierung
+- Sind Quellen [1], [2], etc. im Text referenziert?
+- Werden verschiedene Quellen genutzt (nicht nur [1]-[3])?
+- Aktuell: {source_refs} Quellenverweise
+
+## 3. Struktur
+- Hat der Artikel eine Executive Summary?
+- Sind alle Kapitel ausreichend ausgeführt (nicht nur 2-3 Sätze)?
+- Gibt es einen Limitations-Abschnitt?
+
+## 4. Inhaltliche Qualität
+- Werden die Kernfragen beantwortet?
+- Sind die Informationen konsistent?
+- Gibt es Lücken oder fehlende wichtige Aspekte?
+
+# OUTPUT-FORMAT (JSON!)
+
+Antworte NUR mit diesem JSON (keine weitere Erklärung):
+
+```json
+{{
+  "verdict": "approved|revise|research",
+  "confidence": 0.0-1.0,
+  "summary": "Kurze Zusammenfassung der Bewertung",
+  "issues": [
+    {{
+      "type": "length|sources|structure|content_gap",
+      "description": "Was ist das Problem?",
+      "severity": "critical|major|minor",
+      "suggested_action": "revise|research",
+      "research_query": "Falls research nötig: Suchquery"
+    }}
+  ]
+}}
+```
+
+WICHTIG: 
+- "approved" NUR wenn Artikel > 2500 Wörter UND gute Quellenreferenzierung UND vollständige Struktur
+- "revise" bei Strukturproblemen, zu kurz, oder stilistischen Issues
+- "research" NUR wenn konkrete Fakten/Daten fehlen die recherchiert werden müssen
+
+DEIN VERDICT:"""
+
+        # === LOGGING: Start Editor Step ===
+        step_idx = self.logger.start_step(
+            agent="EditorialReviewer",
+            model=model_name,
+            provider=provider,
+            tier=tier,
+            action="editorial_review",
+            task=f"Prüfe Artikel (Revision {revision_round})"
+        )
+        
+        try:
+            # Provider-spezifischer API-Aufruf
+            if provider == "anthropic":
+                from anthropic import Anthropic
+                from config import ANTHROPIC_API_KEY
+                
+                client = Anthropic(api_key=ANTHROPIC_API_KEY)
+                response = client.messages.create(
+                    model=model_name,
+                    max_tokens=2000,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                result_text = response.content[0].text
+                tokens = {
+                    "input": response.usage.input_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.output_tokens if hasattr(response, 'usage') else 0
+                }
+            else:
+                from openai import OpenAI
+                from config import OPENAI_API_KEY
+                
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=2000
+                )
+                result_text = response.choices[0].message.content
+                tokens = {
+                    "input": response.usage.prompt_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.completion_tokens if hasattr(response, 'usage') else 0
+                }
+            
+            # Verdict parsen
+            verdict = EditorVerdict.from_response(result_text)
+            
+            # === LOGGING: End Editor Step ===
+            self.logger.end_step(
+                step_idx,
+                status="success",
+                tokens=tokens,
+                result_length=len(result_text),
+                details={
+                    "verdict": verdict.verdict,
+                    "confidence": verdict.confidence,
+                    "issues_count": len(verdict.issues),
+                    "word_count_checked": word_count,
+                    "model_used": model_name
+                }
+            )
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name="Editor",
+                content=f"📋 Verdict: {verdict.verdict.upper()} ({len(verdict.issues)} Issues)"
+            )
+            
+            return verdict
+            
+        except Exception as e:
+            self.logger.end_step(step_idx, status="error", error=str(e))
+            # Fallback: approved um weiterzumachen
+            return EditorVerdict(verdict="approved", confidence=0.3, summary=f"Fehler: {e}")
+    
+    def _handle_research_gaps(self, verdict) -> Generator[AgentEvent, None, None]:
+        """
+        Führt Nachrecherche für identifizierte Lücken durch.
+        """
+        research_queries = verdict.get_research_queries()
+        
+        if not research_queries:
+            return
+        
+        yield AgentEvent(
+            event_type=EventType.STATUS,
+            agent_name="Retriever",
+            content=f"🔍 Nachrecherche für {len(research_queries)} Lücken..."
+        )
+        
+        # === LOGGING: Start Gap Research Step ===
+        step_idx = self.logger.start_step(
+            agent="GapRetriever",
+            model="tool-based",
+            provider="mcp",
+            tier="standard",
+            action="gap_research",
+            task=f"Nachrecherche für {len(research_queries)} Lücken"
+        )
+        
+        new_sources = 0
+        for query in research_queries[:5]:  # Max 5 Nachrecherchen
+            try:
+                result = self.mcp.call_tool("tavily_search", {"query": query, "max_results": 3})
+                
+                if result and result.get("results"):
+                    for item in result["results"]:
+                        url = item.get("url", "")
+                        if url and url not in self.source_index:
+                            # Neue Quelle hinzufügen
+                            new_idx = max(self.source_index.values(), default=0) + 1
+                            self.source_index[url] = new_idx
+                            
+                            source = Source(
+                                source_id=f"S-GAP-{new_idx:02d}",
+                                title=item.get("title", ""),
+                                publisher=self._extract_publisher(url),
+                                url=url,
+                                extract=item.get("snippet", "")[:400],
+                                supports_claims=["GAP"]
+                            )
+                            
+                            # Zu einem neuen EvidencePack hinzufügen
+                            if "GAP" not in self.evidence_packs:
+                                self.evidence_packs["GAP"] = EvidencePack(
+                                    claim_id="GAP",
+                                    sources=[],
+                                    status=ClaimStatus.FULFILLED
+                                )
+                            self.evidence_packs["GAP"].sources.append(source)
+                            new_sources += 1
+                            
+            except Exception as e:
+                pass
+        
+        # === LOGGING: End Gap Research Step ===
+        self.logger.end_step(
+            step_idx,
+            status="success",
+            result_length=new_sources,
+            details={
+                "queries_processed": len(research_queries),
+                "new_sources_found": new_sources
+            }
+        )
+        
+        yield AgentEvent(
+            event_type=EventType.STATUS,
+            agent_name="Retriever",
+            content=f"✅ {new_sources} neue Quellen gefunden"
+        )
+    
+    def _revise_article(self, verdict) -> Generator[AgentEvent, None, str]:
+        """
+        Writer überarbeitet den Artikel basierend auf Editor-Feedback.
+        """
+        # Dynamische Modellauswahl
+        model_name, provider = self._get_model("writer")
+        tier = self.tiers.get("writer", "premium")
+        
+        yield AgentEvent(
+            event_type=EventType.STATUS,
+            agent_name="Writer",
+            content=f"✏️ Überarbeite Artikel mit {model_name}..."
+        )
+        
+        # Feedback aufbereiten
+        issues_text = ""
+        for issue in verdict.issues:
+            issues_text += f"- [{issue.severity.upper()}] {issue.type}: {issue.description}\n"
+            issues_text += f"  Aktion: {issue.suggested_action}\n"
+        
+        # Neue Quellen falls vorhanden
+        new_sources_text = ""
+        if "GAP" in self.evidence_packs:
+            new_sources_text = "\n\n# NEUE QUELLEN (aus Nachrecherche)\n"
+            for source in self.evidence_packs["GAP"].sources:
+                idx = self.source_index.get(source.url, "?")
+                new_sources_text += f"[{idx}] {source.publisher}: {source.title}\n"
+                new_sources_text += f"    URL: {source.url}\n"
+                new_sources_text += f"    Auszug: {source.extract[:200]}...\n\n"
+        
+        prompt = f"""Du bist ein wissenschaftlicher Autor und überarbeitest einen Artikel.
+
+# EDITOR-FEEDBACK
+{verdict.summary}
+
+## Identifizierte Probleme:
+{issues_text}
+{new_sources_text}
+
+# AKTUELLER ARTIKEL
+{self.article}
+
+# ÜBERARBEITUNGSREGELN
+
+1. Behebe ALLE identifizierten Probleme
+2. Bei "length" Issues: Erweitere die Kapitel mit mehr Details, Beispielen, Kontext
+3. Bei "sources" Issues: Füge mehr Quellenverweise [X] hinzu
+4. Bei "structure" Issues: Ergänze fehlende Abschnitte (Executive Summary, Limitations)
+5. Bei "content_gap" Issues: Nutze die neuen Quellen aus der Nachrecherche
+
+WICHTIG:
+- Der überarbeitete Artikel muss MINDESTENS 3000 Wörter haben
+- Behalte die Grundstruktur bei, erweitere sie nur
+- Füge die neuen Quellen mit ihren Nummern [X] ein
+
+SCHREIBE DEN VOLLSTÄNDIG ÜBERARBEITETEN ARTIKEL:"""
+
+        # === LOGGING: Start Revision Step ===
+        step_idx = self.logger.start_step(
+            agent="ArticleReviser",
+            model=model_name,
+            provider=provider,
+            tier=tier,
+            action="article_revision",
+            task=f"Überarbeite basierend auf {len(verdict.issues)} Issues"
+        )
+        
+        try:
+            # Provider-spezifischer API-Aufruf
+            if provider == "openai":
+                from openai import OpenAI
+                from config import OPENAI_API_KEY
+                
+                client = OpenAI(api_key=OPENAI_API_KEY)
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_completion_tokens=12000
+                )
+                revised_article = response.choices[0].message.content
+                tokens = {
+                    "input": response.usage.prompt_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.completion_tokens if hasattr(response, 'usage') else 0
+                }
+            else:
+                from anthropic import Anthropic
+                from config import ANTHROPIC_API_KEY
+                
+                client = Anthropic(api_key=ANTHROPIC_API_KEY)
+                response = client.messages.create(
+                    model=model_name,
+                    max_tokens=12000,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                revised_article = response.content[0].text
+                tokens = {
+                    "input": response.usage.input_tokens if hasattr(response, 'usage') else 0,
+                    "output": response.usage.output_tokens if hasattr(response, 'usage') else 0
+                }
+            
+            word_count = len(revised_article.split())
+            
+            # === LOGGING: End Revision Step ===
+            self.logger.end_step(
+                step_idx,
+                status="success",
+                tokens=tokens,
+                result_length=len(revised_article),
+                details={
+                    "issues_addressed": len(verdict.issues),
+                    "new_word_count": word_count,
+                    "model_used": model_name
+                }
+            )
+            
+            yield AgentEvent(
+                event_type=EventType.STATUS,
+                agent_name="Writer",
+                content=f"✅ Revision: {word_count} Wörter"
+            )
+            
+            return revised_article
+            
+        except Exception as e:
+            self.logger.end_step(step_idx, status="error", error=str(e))
+            # Fallback: Original zurückgeben
+            return self.article
