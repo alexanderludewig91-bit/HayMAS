@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useStudio } from '../hooks/useStudio';
 import { Header } from './Header';
 import { IdleView } from './IdleView';
@@ -6,6 +7,7 @@ import { ProducingView } from './ProducingView';
 import { CompleteView } from './CompleteView';
 import { ArchiveDrawer } from './ArchiveDrawer';
 import { SettingsDrawer } from './SettingsDrawer';
+import { PromptRefiner } from './PromptRefiner';
 
 export function Studio() {
   const {
@@ -36,6 +38,44 @@ export function Studio() {
     setTier,
   } = useStudio();
 
+  // Prompt Refiner Modal State
+  const [refinerOpen, setRefinerOpen] = useState(false);
+  const [refinerMode, setRefinerMode] = useState<'analyze' | 'quickstart'>('analyze');
+
+  // Öffnet den Refiner statt direkt zu starten
+  const handleAnalyzeClick = () => {
+    if (question.trim()) {
+      setRefinerMode('analyze');
+      setRefinerOpen(true);
+    }
+  };
+
+  const handleQuickStartClick = () => {
+    if (question.trim()) {
+      setRefinerMode('quickstart');
+      setRefinerOpen(true);
+    }
+  };
+
+  // Callback wenn Refiner bestätigt wird
+  const handleRefinerConfirm = (optimizedPrompt: string, _parameters: { target_pages: number; audience: string; tone: string; format: string }) => {
+    setRefinerOpen(false);
+    // Optimierten Prompt übernehmen
+    setQuestion(optimizedPrompt);
+    
+    // Je nach Modus weitermachen
+    if (refinerMode === 'analyze') {
+      // Kurze Verzögerung damit der State aktualisiert wird
+      setTimeout(() => {
+        analyzeAndPlan();
+      }, 50);
+    } else {
+      setTimeout(() => {
+        startGenerationWithoutPlan();
+      }, 50);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col">
       <Header
@@ -55,8 +95,8 @@ export function Studio() {
           <IdleView
             question={question}
             onQuestionChange={setQuestion}
-            onAnalyze={analyzeAndPlan}
-            onQuickStart={startGenerationWithoutPlan}
+            onAnalyze={handleAnalyzeClick}
+            onQuickStart={handleQuickStartClick}
             isAnalyzing={isAnalyzing}
           />
         )}
@@ -105,6 +145,14 @@ export function Studio() {
         onClose={() => setSettingsOpen(false)}
         tiers={tiers}
         onTierChange={setTier}
+      />
+
+      {/* Prompt Refiner Modal */}
+      <PromptRefiner
+        isOpen={refinerOpen}
+        originalPrompt={question}
+        onClose={() => setRefinerOpen(false)}
+        onConfirm={handleRefinerConfirm}
       />
     </div>
   );

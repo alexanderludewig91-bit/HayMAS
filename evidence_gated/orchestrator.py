@@ -182,12 +182,46 @@ class EvidenceGatedOrchestrator:
             
             # Validierung
             validation = claim_register.validate()
+            
+            # === KRITISCHER CHECK: Ohne Claims kein Artikel! ===
+            if validation['stats']['total_claims'] == 0:
+                error_msg = "❌ KRITISCHER FEHLER: ClaimMiner hat 0 Claims generiert. " \
+                           "Ohne Claims kann kein wissenschaftlicher Artikel erstellt werden. " \
+                           "Bitte erneut versuchen."
+                yield AgentEvent(
+                    event_type=EventType.ERROR,
+                    agent_name="Orchestrator",
+                    content=error_msg
+                )
+                # Prozess abbrechen
+                self.logger.abort(reason=error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "article_path": None
+                }
+            
             if not validation["valid"]:
                 yield AgentEvent(
                     event_type=EventType.ERROR,
                     agent_name="Orchestrator",
                     content=f"⚠️ ClaimRegister: {'; '.join(validation['issues'])}"
                 )
+                # Bei zu wenigen Claims trotzdem abbrechen
+                if validation['stats']['total_claims'] < 5:
+                    error_msg = f"❌ Zu wenige Claims ({validation['stats']['total_claims']}). " \
+                               f"Mindestens 5 Claims erforderlich für einen Artikel."
+                    yield AgentEvent(
+                        event_type=EventType.ERROR,
+                        agent_name="Orchestrator",
+                        content=error_msg
+                    )
+                    self.logger.abort(reason=error_msg)
+                    return {
+                        "success": False,
+                        "error": error_msg,
+                        "article_path": None
+                    }
             else:
                 yield AgentEvent(
                     event_type=EventType.STATUS,
@@ -205,6 +239,30 @@ class EvidenceGatedOrchestrator:
             )
             
             yield from self._phase_3_4_retrieval()
+            
+            # === CHECK: Wurden genug Quellen gefunden? ===
+            total_sources = sum(len(ep.sources) for ep in self.evidence_packs.values())
+            if total_sources == 0:
+                error_msg = "❌ KRITISCHER FEHLER: Keine Quellen gefunden. " \
+                           "Ohne Quellen kann kein wissenschaftlicher Artikel erstellt werden. " \
+                           "Bitte erneut versuchen oder Thema anpassen."
+                yield AgentEvent(
+                    event_type=EventType.ERROR,
+                    agent_name="Orchestrator",
+                    content=error_msg
+                )
+                self.logger.abort(reason=error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "article_path": None
+                }
+            elif total_sources < 5:
+                yield AgentEvent(
+                    event_type=EventType.STATUS,
+                    agent_name="Orchestrator",
+                    content=f"⚠️ Nur {total_sources} Quellen gefunden - Artikel könnte dünn werden"
+                )
             
             # ===== PHASE 5: Evidence Rating =====
             yield AgentEvent(
@@ -886,7 +944,7 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=12000  # Mehr Tokens für längeren Artikel
+                    max_completion_tokens=16000  # Mehr Tokens für längeren Artikel
                 )
                 article = response.choices[0].message.content
                 tokens = {
@@ -900,7 +958,7 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
                 client = Anthropic(api_key=ANTHROPIC_API_KEY)
                 response = client.messages.create(
                     model=model_name,
-                    max_tokens=12000,
+                    max_tokens=16000,  # Erhöht für längere Artikel
                     messages=[{"role": "user", "content": prompt}]
                 )
                 article = response.content[0].text
@@ -1299,32 +1357,45 @@ DEIN VERDICT:"""
                 new_sources_text += f"    URL: {source.url}\n"
                 new_sources_text += f"    Auszug: {source.extract[:200]}...\n\n"
         
-        prompt = f"""Du bist ein wissenschaftlicher Autor und überarbeitest einen Artikel.
+        # Aktuelle Wortanzahl für den Prompt
+        current_word_count = len(self.article.split()) if self.article else 0
+        
+        prompt = f"""Du bist ein erfahrener wissenschaftlicher Lektor. Deine Aufgabe ist eine GEZIELTE ÜBERARBEITUNG.
 
 # EDITOR-FEEDBACK
 {verdict.summary}
 
-## Identifizierte Probleme:
+## Zu behebende Probleme:
 {issues_text}
 {new_sources_text}
 
 # AKTUELLER ARTIKEL
 {self.article}
 
-# ÜBERARBEITUNGSREGELN
+# ÜBERARBEITUNGSANLEITUNG
 
-1. Behebe ALLE identifizierten Probleme
-2. Bei "length" Issues: Erweitere die Kapitel mit mehr Details, Beispielen, Kontext
-3. Bei "sources" Issues: Füge mehr Quellenverweise [X] hinzu
-4. Bei "structure" Issues: Ergänze fehlende Abschnitte (Executive Summary, Limitations)
-5. Bei "content_gap" Issues: Nutze die neuen Quellen aus der Nachrecherche
+## Dein Auftrag
+Behebe EXAKT die oben genannten Probleme. Nicht mehr, nicht weniger.
 
-WICHTIG:
-- Der überarbeitete Artikel muss MINDESTENS 3000 Wörter haben
-- Behalte die Grundstruktur bei, erweitere sie nur
-- Füge die neuen Quellen mit ihren Nummern [X] ein
+## Issue-spezifische Maßnahmen
+- "sources": Füge an den kritisierten Stellen fehlende Quellenverweise [X] ein
+- "structure": Ergänze konkret die fehlenden Abschnitte (z.B. Executive Summary, Limitations)
+- "content_gap": Vertiefe GENAU die genannten Themen mit den neuen Quellen
+- "consistency": Korrigiere PRÄZISE die genannten Widersprüche
+- "length": Erweitere die KONKRET kritisierten dünnen Passagen
 
-SCHREIBE DEN VOLLSTÄNDIG ÜBERARBEITETEN ARTIKEL:"""
+## Qualitätsprinzipien
+1. CHIRURGISCHE PRÄZISION: Ändere nur, was kritisiert wurde
+2. KONTEXT BEWAHREN: Bestehende gute Passagen bleiben unverändert
+3. QUELLENINTEGRITÄT: Alle [X]-Verweise müssen erhalten bleiben
+4. VOLLSTÄNDIGKEIT: Gib den GESAMTEN Artikel zurück (nicht nur Änderungen)
+
+## WICHTIG
+- Keine proaktiven "Verbesserungen" an Stellen ohne Kritik
+- Kein Fülltext - jede Ergänzung muss einen Issue adressieren
+- Der wissenschaftliche Ton bleibt durchgehend sachlich
+
+ÜBERARBEITETER ARTIKEL:"""
 
         # === LOGGING: Start Revision Step ===
         step_idx = self.logger.start_step(
@@ -1346,7 +1417,7 @@ SCHREIBE DEN VOLLSTÄNDIG ÜBERARBEITETEN ARTIKEL:"""
                 response = client.chat.completions.create(
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
-                    max_completion_tokens=12000
+                    max_completion_tokens=16000  # Erhöht für längere Revisionen
                 )
                 revised_article = response.choices[0].message.content
                 tokens = {
@@ -1360,7 +1431,7 @@ SCHREIBE DEN VOLLSTÄNDIG ÜBERARBEITETEN ARTIKEL:"""
                 client = Anthropic(api_key=ANTHROPIC_API_KEY)
                 response = client.messages.create(
                     model=model_name,
-                    max_tokens=12000,
+                    max_tokens=16000,  # Erhöht für längere Revisionen
                     messages=[{"role": "user", "content": prompt}]
                 )
                 revised_article = response.content[0].text
@@ -1369,7 +1440,33 @@ SCHREIBE DEN VOLLSTÄNDIG ÜBERARBEITETEN ARTIKEL:"""
                     "output": response.usage.output_tokens if hasattr(response, 'usage') else 0
                 }
             
-            word_count = len(revised_article.split())
+            word_count = len(revised_article.split()) if revised_article else 0
+            original_word_count = len(self.article.split()) if self.article else 0
+            
+            # === FALLBACK: Wenn Revision leer oder viel kürzer, behalte Original ===
+            if word_count < 500 or (original_word_count > 0 and word_count < original_word_count * 0.3):
+                # Revision ist zu kurz oder leer - behalte das Original!
+                self.logger.end_step(
+                    step_idx,
+                    status="success",  # Technisch erfolgreich, aber Fallback
+                    tokens=tokens,
+                    result_length=len(self.article),
+                    details={
+                        "issues_addressed": len(verdict.issues),
+                        "new_word_count": original_word_count,
+                        "model_used": model_name,
+                        "fallback": True,
+                        "reason": f"Revision zu kurz ({word_count} Wörter), behalte Original ({original_word_count} Wörter)"
+                    }
+                )
+                
+                yield AgentEvent(
+                    event_type=EventType.STATUS,
+                    agent_name="Writer",
+                    content=f"⚠️ Revision fehlgeschlagen ({word_count} Wörter) - behalte Original ({original_word_count} Wörter)"
+                )
+                
+                return self.article  # Behalte das Original!
             
             # === LOGGING: End Revision Step ===
             self.logger.end_step(

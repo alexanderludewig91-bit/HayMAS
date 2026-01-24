@@ -1,0 +1,413 @@
+/* HayMAS PDF Template - Professional Document Styling */
+
+/* ==========================================================================
+   Page Setup
+   ========================================================================== */
+
+@page {
+    size: A4;
+    margin: 25mm 20mm 30mm 20mm;
+    
+    @top-right {
+        content: string(document-title);
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 8pt;
+        color: #666;
+    }
+    
+    @bottom-center {
+        content: counter(page) " / " counter(pages);
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 9pt;
+        color: #666;
+    }
+    
+    @bottom-right {
+        content: "HayMAS";
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+        font-size: 8pt;
+        color: #999;
+        font-style: italic;
+    }
+}
+
+@page :first {
+    margin-top: 20mm;
+    
+    @top-right {
+        content: none;
+    }
+}
+
+/* ==========================================================================
+   Base Typography
+   ========================================================================== */
+
+body {
+    font-family: "Georgia", "Times New Roman", serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #1a1a1a;
+    text-align: justify;
+    hyphens: auto;
+}
+
+/* ==========================================================================
+   Cover / Title Section
+   ========================================================================== */
+
+.cover {
+    page-break-after: always;
+    text-align: center;
+    padding-top: 60mm;
+}
+
+.cover h1 {
+    string-set: document-title content();
+}
+
+.cover .meta {
+    margin-top: 40mm;
+    font-size: 10pt;
+    color: #666;
+}
+
+.cover .branding {
+    position: fixed;
+    bottom: 30mm;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 9pt;
+    color: #888;
+    border-top: 1px solid #ddd;
+    padding-top: 10mm;
+}
+
+.cover .branding strong {
+    color: #444;
+    font-weight: 600;
+}
+
+/* ==========================================================================
+   Headings
+   ========================================================================== */
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    color: #111;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+    page-break-after: avoid;
+    text-align: left;
+}
+
+h1 {
+    font-size: 22pt;
+    line-height: 1.2;
+    border-bottom: 2px solid #333;
+    padding-bottom: 8pt;
+    margin-top: 0;
+    string-set: document-title content();
+}
+
+h2 {
+    font-size: 14pt;
+    color: #222;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 4pt;
+    margin-top: 24pt;
+}
+
+h3 {
+    font-size: 12pt;
+    color: #333;
+    margin-top: 18pt;
+}
+
+h4 {
+    font-size: 11pt;
+    color: #444;
+    font-style: italic;
+    margin-top: 14pt;
+}
+
+/* ==========================================================================
+   Paragraphs & Text
+   ========================================================================== */
+
+p {
+    margin: 0 0 10pt 0;
+    orphans: 3;
+    widows: 3;
+    clear: both;
+}
+
+/* Verhindern dass starker Text floated */
+strong {
+    font-weight: 700;
+    color: #000;
+    float: none;
+    display: inline;
+}
+
+em {
+    font-style: italic;
+    float: none;
+    display: inline;
+}
+
+/* Allgemeine Cleanup-Regel */
+* {
+    box-sizing: border-box;
+}
+
+/* ==========================================================================
+   Lists
+   ========================================================================== */
+
+ul, ol {
+    margin: 10pt 0;
+    padding-left: 20pt;
+    clear: both;
+    text-align: left;
+}
+
+li {
+    margin-bottom: 4pt;
+    text-align: left;
+}
+
+li > ul, li > ol {
+    margin-top: 4pt;
+    margin-bottom: 4pt;
+}
+
+/* Ensure list items don't float */
+li::marker {
+    float: none;
+}
+
+/* ==========================================================================
+   Tables - Conference Paper Style
+   ========================================================================== */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16pt 0;
+    font-size: 9.5pt;
+    page-break-inside: avoid;
+}
+
+thead {
+    background-color: #f0f0f0;
+}
+
+th {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    text-align: left;
+    padding: 8pt 10pt;
+    border: 1px solid #ccc;
+    background-color: #f5f5f5;
+    color: #222;
+}
+
+td {
+    padding: 6pt 10pt;
+    border: 1px solid #ddd;
+    vertical-align: top;
+}
+
+tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+/* Table caption style */
+table + p:first-of-type {
+    font-size: 9pt;
+    color: #666;
+    font-style: italic;
+    margin-top: -8pt;
+}
+
+/* ==========================================================================
+   Code Blocks
+   ========================================================================== */
+
+code {
+    font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+    font-size: 9pt;
+    background-color: #f5f5f5;
+    padding: 1pt 4pt;
+    border-radius: 2pt;
+    color: #d14;
+}
+
+pre {
+    font-family: "SF Mono", "Monaco", "Menlo", "Consolas", monospace;
+    font-size: 8.5pt;
+    background-color: #f8f8f8;
+    border: 1px solid #e0e0e0;
+    border-left: 3px solid #666;
+    padding: 10pt 12pt;
+    margin: 12pt 0;
+    overflow-x: auto;
+    line-height: 1.4;
+    page-break-inside: avoid;
+}
+
+pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+}
+
+/* ==========================================================================
+   Blockquotes
+   ========================================================================== */
+
+blockquote {
+    margin: 16pt 0;
+    padding: 10pt 16pt;
+    border-left: 4px solid #ddd;
+    background-color: #fafafa;
+    font-style: italic;
+    color: #555;
+}
+
+blockquote p {
+    margin: 0;
+}
+
+/* ==========================================================================
+   Horizontal Rules / Section Breaks
+   ========================================================================== */
+
+hr {
+    border: none;
+    border-top: 1px solid #ddd;
+    margin: 24pt 0;
+}
+
+/* ==========================================================================
+   Links & References
+   ========================================================================== */
+
+a {
+    color: #0066cc;
+    text-decoration: none;
+}
+
+/* Citation references in text [1] */
+a[href^="#ref-"], 
+sup {
+    font-size: 8pt;
+    color: #666;
+}
+
+/* ==========================================================================
+   Bibliography / References Section
+   ========================================================================== */
+
+h2#literaturverzeichnis,
+h2#references,
+h2#bibliography {
+    page-break-before: always;
+    margin-top: 0;
+    clear: both;
+}
+
+/* Alle Absätze nach der Literaturverzeichnis-Überschrift */
+h2#literaturverzeichnis ~ p,
+h2#references ~ p,
+h2#bibliography ~ p {
+    font-size: 10pt;
+    text-align: left;
+    margin-bottom: 12pt;
+    padding-left: 32pt;
+    text-indent: -32pt;
+    clear: both;
+    line-height: 1.5;
+}
+
+/* Links im Literaturverzeichnis */
+h2#literaturverzeichnis ~ p a,
+h2#references ~ p a,
+h2#bibliography ~ p a {
+    color: #0066cc;
+    text-decoration: underline;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* ==========================================================================
+   Executive Summary Box
+   ========================================================================== */
+
+.executive-summary {
+    background-color: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-left: 4px solid #0066cc;
+    padding: 16pt 20pt;
+    margin: 0 0 24pt 0;
+    /* Kein page-break-inside: avoid - Summary darf über Seiten gehen */
+}
+
+.executive-summary p {
+    margin-bottom: 8pt;
+}
+
+.executive-summary p:last-child {
+    margin-bottom: 0;
+}
+
+.executive-summary ul,
+.executive-summary ol {
+    margin: 8pt 0;
+}
+
+.executive-summary li {
+    margin-bottom: 4pt;
+}
+
+/* ==========================================================================
+   Print Utilities
+   ========================================================================== */
+
+.page-break {
+    page-break-before: always;
+}
+
+.no-break {
+    page-break-inside: avoid;
+}
+
+/* Avoid breaking after headings */
+h1, h2, h3, h4 {
+    page-break-after: avoid;
+}
+
+/* Keep figures and tables together */
+figure, table {
+    page-break-inside: avoid;
+}
+
+/* ==========================================================================
+   Footer Branding (embedded in content)
+   ========================================================================== */
+
+.document-footer {
+    margin-top: 30pt;
+    padding-top: 16pt;
+    border-top: 1px solid #ddd;
+    font-size: 8pt;
+    color: #888;
+    text-align: center;
+}
+
+.document-footer .tagline {
+    font-style: italic;
+}

@@ -1,0 +1,33 @@
+{
+  "timestamp": "2026-01-22T07:27:42.049581",
+  "topic": "Low-Code-Plattformen in der öffentlichen Verwaltung Deutschlands",
+  "api_status": {
+    "claude": false,
+    "gemini": true,
+    "gemini_pro": false
+  },
+  "results": [
+    {
+      "provider": "Google",
+      "model": "gemini-2.0-flash",
+      "response": "```json\n{\n  \"claims\": [\n    {\n      \"id\": \"C-01\",\n      \"statement\": \"Low-Code-Plattformen ermöglichen es auch Mitarbeitern ohne umfassende Programmierkenntnisse, Anwendungen zu erstellen und anzupassen.\",\n      \"type\": \"DEFINITION\",\n      \"evidence_class\": \"B\",\n      \"why_this_class\": \"Grundlegende Definition, aber ein Beleg für die Abgrenzung zu anderen Entwicklungsmethoden ist sinnvoll.\"\n    },\n    {\n      \"id\": \"C-02\",\n      \"statement\": \"Die Einführung von Low-Code-Plattformen in der öffentlichen Verwaltung führt zu einer Beschleunigung der Digitalisierungsprozesse.\",\n      \"type\": \"EFFECT\",\n      \"evidence_class\": \"C\",\n      \"why_this_class\": \"Behauptung über einen Effekt, der empirisch belegt werden muss, da er von vielen Faktoren abhängt.\"\n    },\n    {\n      \"id\": \"C-03\",\n      \"statement\": \"Im Vergleich zu traditionellen Softwareentwicklungsmethoden reduzieren Low-Code-Plattformen die Entwicklungszeit um durchschnittlich X Prozent in Projekten der öffentlichen Verwaltung.\",\n      \"type\": \"QUANT\",\n      \"evidence_class\": \"C\",\n      \"why_this_class\": \"Quantitative Aussage, die empirische Daten und Vergleichbarkeit erfordert.\"\n    },\n    {\n      \"id\": \"C-04\",\n      \"statement\": \"Low-Code-Plattformen unterstützen die Einhaltung von Compliance-Vorgaben und Sicherheitsstandards in der öffentlichen Verwaltung durch integrierte Kontrollmechanismen.\",\n      \"type\": \"MECHANISM\",\n      \"evidence_class\": \"C\",\n      \"why_this_class\": \"Spezifischer Mechanismus, der durch die Plattformen bereitgestellt wird. Muss anhand konkreter Beispiele und Standards belegt werden.\"\n    },\n    {\n      \"id\": \"C-05\",\n      \"statement\": \"Ein wesentlicher Vorteil von Low-Code-Plattformen liegt in ihrer Flexibilität und Anpassungsfähigkeit an die spezifischen Bedürfnisse der einzelnen Behörden.\",\n      \"type\": \"EFFECT\",\n      \"evidence_class\": \"B\",\n      \"why_this_class\": \"Allgemein akzeptiert, aber konkrete Beispiele untermauern die Aussage.\"\n    },\n    {\n      \"id\": \"C-06\",\n      \"statement\": \"Die Nutzung von Low-Code-Plattformen erfordert eine Anpassung der IT-Governance-Strukturen in den Behörden.\",\n      \"type\": \"EFFECT\",\n      \"evidence_class\": \"C\",\n      \"why_this_class\": \"Impliziert eine organisatorische Veränderung, die nachgewiesen werden muss.\"\n    },\n    {\n      \"id\": \"C-07\",\n      \"statement\": \"Die Kosten für die Implementierung und den Betrieb von Low-Code-Plattformen sind im ersten Jahr tendenziell höher als bei der reinen Nutzung von Standardsoftware, amortisieren sich aber langfristig.\",\n      \"type\": \"QUANT\",\n      \"evidence_class\": \"C\",\n      \"why_this_class\": \"Behauptung über Kosten und Amortisation, die empirisch und differenziert (Standard vs. Low-Code) belegt werden muss.\"\n    },\n    {\n      \"id\": \"C-08\",\n      \"statement\": \"Die Auswahl der geeigneten Low-Code-Plattform für eine Behörde hängt stark von deren spezifischen Anforderungen und der bestehenden IT-Infrastruktur ab.\",\n      \"type\": \"MECHANISM\",\n      \"evidence_class\": \"B\",\n      \"why_this_class\": \"Logisch, aber konkrete Kriterien für die Auswahl sollten genannt werden.\"\n    },\n    {\n      \"id\": \"C-09\",\n      \"statement\": \"Low-Code-Plattformen tragen zur Demokratisierung der Softwareentwicklung in der öffentlichen Verwaltung bei.\",\n      \"type\": \"EFFECT\",\n      \"evidence_class\": \"C\",\n      \"why_this_class\": \"Starke normative Aussage, die anhand konkreter Beispiele und Veränderungen in der Organisation belegt werden muss. Was bedeutet Demokratisierung konkret?\"\n    },\n    {\n      \"id\": \"C-10\",\n      \"statement\": \"Viele Low-Code-Plattformen bieten eine Integration mit bestehenden Fachanwendungen der öffentlichen Verwaltung über APIs.\",\n      \"type\": \"MECHANISM\",\n      \"evidence_class\": \"B\",\n      \"why_this_class\": \"Behauptung über technische Möglichkeiten, die durch Beispiele untermauert werden kann.\"\n    }\n  ]\n}\n```",
+      "input_tokens": 258,
+      "output_tokens": 1036,
+      "duration_sec": 7.36,
+      "cost_usd": 0.00044,
+      "claims_analysis": {
+        "count": 10,
+        "types": {
+          "DEFINITION": 1,
+          "EFFECT": 4,
+          "QUANT": 2,
+          "MECHANISM": 3
+        },
+        "evidence_classes": {
+          "B": 4,
+          "C": 6
+        }
+      }
+    }
+  ]
+}

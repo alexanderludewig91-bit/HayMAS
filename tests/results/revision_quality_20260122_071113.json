@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-01-22T07:11:13.786366",
+  "prompt_version": "quality_focused_v1",
+  "mock_article_words": 180,
+  "total_cost_usd": 0.0021999999999999997,
+  "focused_ratio": "3/5",
+  "results": [
+    {
+      "scenario": "sources_only",
+      "original_words": 180,
+      "revised_words": 212,
+      "word_change_percent": 17.8,
+      "tokens_used": 1095,
+      "cost_usd": 0.0003,
+      "revision_focused": true,
+      "notes": "Issues: ['sources']"
+    },
+    {
+      "scenario": "structure_only",
+      "original_words": 180,
+      "revised_words": 373,
+      "word_change_percent": 107.2,
+      "tokens_used": 1357,
+      "cost_usd": 0.0005,
+      "revision_focused": false,
+      "notes": "Issues: ['structure']"
+    },
+    {
+      "scenario": "content_gap",
+      "original_words": 180,
+      "revised_words": 339,
+      "word_change_percent": 88.3,
+      "tokens_used": 1303,
+      "cost_usd": 0.0005,
+      "revision_focused": false,
+      "notes": "Issues: ['content_gap']"
+    },
+    {
+      "scenario": "multiple_issues",
+      "original_words": 180,
+      "revised_words": 232,
+      "word_change_percent": 28.9,
+      "tokens_used": 1144,
+      "cost_usd": 0.0004,
+      "revision_focused": true,
+      "notes": "Issues: ['sources', 'consistency']"
+    },
+    {
+      "scenario": "length_issue",
+      "original_words": 180,
+      "revised_words": 358,
+      "word_change_percent": 98.9,
+      "tokens_used": 1388,
+      "cost_usd": 0.0005,
+      "revision_focused": true,
+      "notes": "Issues: ['length']"
+    }
+  ]
+}

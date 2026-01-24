@@ -1,0 +1,230 @@
+{
+  "timestamp": "20260121_220642",
+  "test_count": 8,
+  "results": [
+    {
+      "test_id": "T1",
+      "prompt": "Übersicht e-Aktensysteme Deutschland",
+      "description": "Baseline 'Übersicht'",
+      "question_brief": {
+        "audience": "Fachexperten",
+        "tone": "wissenschaftlich",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "Elektronische Aktensysteme in deutschen Behörden (Bund, Länder, Kommunen)",
+          "E-Akte-Lösungen für die öffentliche Verwaltung",
+          "Dokumentenmanagementsysteme (DMS) mit e-Akten-Funktionalität",
+          "Rechtliche Rahmenbedingungen (E-Government-Gesetz, OZG)",
+          "Marktübersicht relevanter Anbieter und Produkte",
+          "Einführungsstand und Umsetzungsfortschritt",
+          "Technische Standards und Schnittstellen (XJustiz, XDomea)"
+        ],
+        "scope_out": [
+          "Elektronische Patientenakte (ePA) im Gesundheitswesen",
+          "Reine Enterprise Content Management Systeme ohne e-Akten-Bezug",
+          "E-Akte-Systeme außerhalb Deutschlands",
+          "Historische/abgelöste Systeme ohne aktuelle Relevanz",
+          "Private Dokumentenarchivierung für Endverbraucher"
+        ],
+        "core_question": "Welche elektronischen Aktensysteme (e-Aktensysteme) werden in Deutschland eingesetzt und wie ist der aktuelle Stand der Digitalisierung von Aktenführung in Behörden und Unternehmen?"
+      }
+    },
+    {
+      "test_id": "T2",
+      "prompt": "Artikel über e-Aktensysteme Deutschland",
+      "description": "Unterschied zu Übersicht?",
+      "question_brief": {
+        "audience": "Fachexperten",
+        "tone": "wissenschaftlich",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "E-Akte in der öffentlichen Verwaltung (Bund, Länder, Kommunen)",
+          "Rechtliche Rahmenbedingungen (E-Government-Gesetz, OZG, Registermodernisierungsgesetz)",
+          "Technische Standards und Schnittstellen (XÖV, XDOMEA)",
+          "Führende Softwarelösungen und Anbieter in Deutschland",
+          "Aktueller Implementierungsstand und Digitalisierungsgrad",
+          "Interoperabilität und Medienbruchfreiheit",
+          "Datenschutz und IT-Sicherheit bei e-Akten"
+        ],
+        "scope_out": [
+          "Elektronische Patientenakte (ePA) im Gesundheitswesen",
+          "Private Dokumentenmanagementsysteme ohne Verwaltungsbezug",
+          "E-Akte-Systeme außerhalb Deutschlands",
+          "Allgemeine Enterprise Content Management Systeme ohne E-Akte-Bezug"
+        ],
+        "core_question": "Umfassende Darstellung von elektronischen Aktensystemen (e-Akte) in Deutschland: Rechtliche Grundlagen, technische Umsetzung, Implementierungsstand und Herausforderungen in der öffentlichen Verwaltung"
+      }
+    },
+    {
+      "test_id": "T3",
+      "prompt": "Expertenbericht e-Aktensysteme Deutschland",
+      "description": "Das 'Magic Word'?",
+      "question_brief": {
+        "audience": "Fachexperten",
+        "tone": "wissenschaftlich",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "E-Akte in der öffentlichen Verwaltung (Bund, Länder, Kommunen)",
+          "Elektronische Patientenakte (ePA) im Gesundheitswesen",
+          "Elektronische Gerichtsakte (eAkte Justiz)",
+          "Rechtliche Grundlagen (E-Government-Gesetz, OZG, BDSG, DSGVO)",
+          "Technische Standards und Schnittstellen (XJustiz, XÖV, TR-ESOR)",
+          "Anbieter und Marktübersicht Deutschland",
+          "Einführungsstand und Digitalisierungsfortschritt",
+          "Interoperabilität und Archivierung"
+        ],
+        "scope_out": [
+          "E-Akte-Systeme außerhalb Deutschlands",
+          "Allgemeine Dokumentenmanagement-Systeme ohne e-Akte-Bezug",
+          "Privatwirtschaftliche Aktenführung ohne Behördenbezug",
+          "Historische Entwicklung vor 2015"
+        ],
+        "core_question": "Umfassender Expertenbericht über den aktuellen Stand, die Implementierung und Entwicklung von elektronischen Aktensystemen (e-Akte) in Deutschland - einschließlich rechtlicher Rahmenbedingungen, technischer Standards, Marktübersicht und Best Practices"
+      }
+    },
+    {
+      "test_id": "T4",
+      "prompt": "Analyse der e-Aktensysteme Deutschland",
+      "description": "Wissenschaftlicher?",
+      "question_brief": {
+        "audience": "Fachexperten",
+        "tone": "wissenschaftlich",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "E-Akte-Lösungen für Bundes-, Landes- und Kommunalverwaltungen",
+          "Technische Architekturen und Standards (XÖV, XDOMEA, TR-RESISCAN)",
+          "Marktführende Anbieter und deren Lösungen",
+          "Aktueller Implementierungsstand nach OZG 2.0",
+          "Integration mit Fachverfahren und DMS-Systemen",
+          "Rechtliche Rahmenbedingungen (E-Government-Gesetz, OZG)",
+          "Interoperabilität und Schnittstellen"
+        ],
+        "scope_out": [
+          "Elektronische Patientenakte (ePA) im Gesundheitswesen",
+          "Private Unternehmens-DMS ohne Behördenbezug",
+          "E-Akte-Systeme außerhalb Deutschlands",
+          "Allgemeine Digitalisierungsstrategien ohne E-Akte-Bezug",
+          "Historische Systeme vor 2020"
+        ],
+        "core_question": "Umfassende Analyse der elektronischen Aktensysteme (e-Akte) im deutschen öffentlichen Sektor: Technologien, Anbieter, Implementierungsstand und Herausforderungen"
+      }
+    },
+    {
+      "test_id": "T5",
+      "prompt": "Deep-Dive e-Aktensysteme Deutschland",
+      "description": "Mehr Seiten?",
+      "question_brief": {
+        "audience": "Fachexperten",
+        "tone": "wissenschaftlich",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "Elektronische Aktenführung in der öffentlichen Verwaltung (Bund, Länder, Kommunen)",
+          "E-Akte im Justizwesen (beA, eJustice)",
+          "Technische Standards und Schnittstellen (XJustiz, XDomea, TR-ESOR)",
+          "Rechtliche Rahmenbedingungen (EGovG, OZG, E-Government-Gesetze der Länder)",
+          "Führende Anbieter und Lösungen am deutschen Markt",
+          "Digitalisierungsstand und aktuelle Projekte",
+          "Integration mit Fachverfahren und DMS-Systemen"
+        ],
+        "scope_out": [
+          "Allgemeine Dokumentenmanagement-Systeme ohne E-Akte-Bezug",
+          "E-Akte-Systeme außerhalb Deutschlands",
+          "Elektronische Patientenakte (ePA) im Gesundheitswesen",
+          "Reine Archivierungslösungen ohne Vorgangsbearbeitung",
+          "Private Cloud-Speicherdienste (Dropbox, Google Drive etc.)"
+        ],
+        "core_question": "Umfassende Analyse der elektronischen Aktensysteme (e-Akte) in Deutschland: Technische Architekturen, rechtliche Grundlagen, Implementierungsstand in Behörden und Unternehmen sowie aktuelle Entwicklungen"
+      }
+    },
+    {
+      "test_id": "T6",
+      "prompt": "Kurze Übersicht e-Aktensysteme Deutschland",
+      "description": "Weniger Seiten?",
+      "question_brief": {
+        "audience": "Fachexperten",
+        "tone": "praxisorientiert",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "E-Akte-Systeme in der öffentlichen Verwaltung (Bund, Länder, Kommunen)",
+          "E-Akte im Justizwesen (beA, eJustice)",
+          "E-Akte im Gesundheitswesen (ePA)",
+          "Führende Softwareanbieter und Produkte",
+          "Rechtliche Grundlagen (EGovG, OZG)",
+          "Aktueller Einführungsstand und Marktübersicht"
+        ],
+        "scope_out": [
+          "Allgemeine DMS-Systeme ohne E-Akte-Fokus",
+          "E-Akte-Systeme außerhalb Deutschlands",
+          "Technische Implementierungsdetails",
+          "Historische Entwicklung vor 2020"
+        ],
+        "core_question": "Welche elektronischen Aktensysteme (e-Akte) werden in Deutschland eingesetzt und wie unterscheiden sie sich?"
+      }
+    },
+    {
+      "test_id": "T7",
+      "prompt": "Ausführlicher Expertenbericht e-Aktensysteme Deutschland",
+      "description": "Mehr Seiten?",
+      "question_brief": {
+        "audience": "Fachexperten",
+        "tone": "wissenschaftlich",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "E-Akte-Systeme in der öffentlichen Verwaltung (Bund, Länder, Kommunen)",
+          "Marktübersicht relevanter Softwarelösungen",
+          "Rechtliche Rahmenbedingungen (E-Government-Gesetz, OZG)",
+          "Implementierungsstand und Rollout-Status",
+          "Technische Architektur und Schnittstellen (XÖV, XJustiz)",
+          "Elektronische Patientenakte (ePA) im Gesundheitswesen",
+          "Justiz-Akten (beA, eJustice)",
+          "Interoperabilität und Standards",
+          "Herausforderungen und Erfolgsfaktoren"
+        ],
+        "scope_out": [
+          "E-Akte-Systeme außerhalb Deutschlands",
+          "Allgemeine DMS-Systeme ohne Behördenbezug",
+          "Private Unternehmensarchivierung",
+          "Historische Papierarchive und deren Digitalisierung (nur wenn nicht e-Akte-relevant)",
+          "Cloud-Speicherlösungen für Privatanwender"
+        ],
+        "core_question": "Wie ist der aktuelle Stand der Implementierung und Nutzung von elektronischen Aktensystemen (e-Akte) in Deutschland, welche Systeme sind im Einsatz, und welche Herausforderungen sowie Best Practices existieren?"
+      }
+    },
+    {
+      "test_id": "T8",
+      "prompt": "Expertenbericht e-Aktensysteme für IT-Entscheider",
+      "description": "Zielgruppe = Management?",
+      "question_brief": {
+        "audience": "Management",
+        "tone": "praxisorientiert",
+        "target_pages": 12,
+        "freshness_priority": "high",
+        "scope_in": [
+          "Elektronische Aktensysteme und ihre Kernfunktionen",
+          "Marktführende Anbieter und Lösungsvergleich",
+          "Technologietrends (KI, Cloud, Automatisierung)",
+          "Auswahlkriterien und Entscheidungsmatrix",
+          "Compliance und rechtliche Anforderungen (GoBD, DSGVO, TR-ESOR)",
+          "Integrationsfähigkeit in bestehende IT-Landschaften",
+          "TCO und ROI-Betrachtungen",
+          "Implementierungsstrategien und Best Practices"
+        ],
+        "scope_out": [
+          "Reine Archivsysteme ohne Aktenfunktionalität",
+          "Consumer-Cloud-Speicher (Dropbox, Google Drive privat)",
+          "Detaillierte technische Implementierungsanleitungen",
+          "Branchenspezifische Speziallösungen im Detail (nur Überblick)",
+          "Historische Systeme ohne aktuelle Marktrelevanz"
+        ],
+        "core_question": "Umfassender Expertenbericht über elektronische Aktensysteme (eAkte/DMS) für strategische IT-Entscheidungen: Marktübersicht, Technologietrends, Auswahlkriterien und Implementierungsaspekte"
+      }
+    }
+  ]
+}

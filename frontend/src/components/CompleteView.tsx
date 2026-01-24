@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Download, Plus, CheckCircle, FileText, FileDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { LogDrawer } from './LogDrawer';
 import { getArticleLog, type SessionLog } from '../lib/api';
 
@@ -125,8 +126,8 @@ export function CompleteView({ articleContent, articlePath, onReset }: CompleteV
       {/* Article */}
       <div className="flex-1 overflow-y-auto">
         {articleContent ? (
-          <article className="prose prose-neutral max-w-none">
-            <ReactMarkdown>{articleContent}</ReactMarkdown>
+          <article className="prose prose-neutral max-w-none prose-table:border-collapse prose-th:border prose-th:border-neutral-300 prose-th:bg-neutral-100 prose-th:px-3 prose-th:py-2 prose-td:border prose-td:border-neutral-300 prose-td:px-3 prose-td:py-2">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{articleContent}</ReactMarkdown>
           </article>
         ) : (
           <div className="text-center text-neutral-500 py-12">

@@ -14,7 +14,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
-from fpdf import FPDF
+import markdown
+from pathlib import Path
+# WeasyPrint wird lazy importiert wegen macOS Library-Pfad-Problemen
 
 sys.path.append(os.path.dirname(__file__))
 
@@ -31,6 +33,7 @@ from agents import (
     EditorAgent,
 )
 from agents.orchestrator import ResearchPlan, ResearchRound
+from agents.prompt_optimizer import PromptOptimizerAgent
 from session_logger import get_log_for_article, list_all_logs, LOGS_DIR
 from mcp_server.server import get_mcp_server
 
@@ -84,6 +87,14 @@ class ResearchPlanModel(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     question: str
+
+
+class RefinePromptRequest(BaseModel):
+    """Request für Prompt-Optimierung"""
+    question: str
+    format: Optional[str] = None  # "overview" | "article" | "report" | "deep_dive"
+    audience: Optional[str] = None  # "experts" | "management" | "general"
+    use_ai: bool = False  # True = LLM-basierte Optimierung, False = regelbasiert
 
 
 class GenerateRequest(BaseModel):
@@ -213,229 +224,384 @@ def get_article_log(filename: str):
     return log
 
 
-class MarkdownPDF(FPDF):
-    """PDF-Generator mit Markdown-Unterstützung."""
+# =============================================================================
+# PDF Generation - WeasyPrint with FPDF Fallback
+# =============================================================================
+
+import re
+from fpdf import FPDF
+
+# Path to CSS template
+PDF_TEMPLATE_DIR = Path(__file__).parent / "templates"
+PDF_CSS_PATH = PDF_TEMPLATE_DIR / "pdf_style.css"
+
+# German month names
+GERMAN_MONTHS = {
+    1: "Januar", 2: "Februar", 3: "März", 4: "April",
+    5: "Mai", 6: "Juni", 7: "Juli", 8: "August",
+    9: "September", 10: "Oktober", 11: "November", 12: "Dezember"
+}
+
+
+def _wrap_executive_summary(md_content: str) -> str:
+    """Wrappe die Executive Summary in einen Container für besseres Styling."""
+    # Finde Executive Summary Sektion
+    pattern = r'(## Executive Summary\s*\n)(.*?)((?=\n---|\n## ))'
     
-    LEFT_MARGIN = 10
-    RIGHT_MARGIN = 10
-    TEXT_WIDTH = 190  # A4 = 210mm - 2*10mm margins
+    def wrapper(match):
+        header = match.group(1)
+        content = match.group(2)
+        # Füge HTML-Kommentare ein die später zu div werden
+        return f'{header}<div class="executive-summary">\n\n{content}\n\n</div>\n'
+    
+    return re.sub(pattern, wrapper, md_content, flags=re.DOTALL | re.IGNORECASE)
+
+
+def _format_literaturverzeichnis(md_content: str) -> str:
+    """Formatiere das Literaturverzeichnis - jede Referenz als eigener Absatz mit korrekten Links."""
+    # Finde Literaturverzeichnis Sektion
+    pattern = r'(## Literaturverzeichnis\s*\n)(.*?)$'
+    
+    def format_reference(line: str) -> str:
+        """Formatiere eine einzelne Referenz-Zeile mit korrektem Markdown-Link."""
+        # Finde URL in der Zeile (http:// oder https://)
+        url_pattern = r'(https?://[^\s]+)'
+        
+        def make_link(match):
+            url = match.group(1)
+            # Entferne trailing Punkt oder Komma falls vorhanden
+            clean_url = url.rstrip('.,;:')
+            trailing = url[len(clean_url):]
+            return f'<{clean_url}>{trailing}'
+        
+        # Ersetze URLs durch explizite Markdown-Links mit angle brackets
+        return re.sub(url_pattern, make_link, line)
+    
+    def formatter(match):
+        header = match.group(1)
+        content = match.group(2)
+        
+        # Jede Zeile die mit [Zahl] beginnt als eigenen Absatz
+        lines = content.split('\n')
+        formatted_lines = []
+        for line in lines:
+            line = line.strip()
+            if line and re.match(r'^\[\d+\]', line):
+                # Referenz-Zeile - URL korrekt formatieren und als eigenen Absatz
+                formatted_line = format_reference(line)
+                formatted_lines.append(f'\n{formatted_line}\n')
+            elif line:
+                formatted_lines.append(line)
+        
+        return f'{header}\n' + '\n'.join(formatted_lines)
+    
+    return re.sub(pattern, formatter, md_content, flags=re.DOTALL | re.IGNORECASE)
+
+
+def _try_weasyprint_pdf(md_content: str, title: str) -> Optional[bytes]:
+    """Versuche PDF mit WeasyPrint zu generieren (beste Qualität)."""
+    try:
+        from weasyprint import HTML, CSS
+        
+        # Sektionen wrappen/formatieren für besseres Styling
+        md_content = _wrap_executive_summary(md_content)
+        md_content = _format_literaturverzeichnis(md_content)
+        
+        # Markdown zu HTML
+        md_converter = markdown.Markdown(
+            extensions=['tables', 'fenced_code', 'toc', 'smarty', 'md_in_html']
+        )
+        html_body = md_converter.convert(md_content)
+        
+        now = datetime.now()
+        current_date = f"{now.day}. {GERMAN_MONTHS[now.month]} {now.year}"
+        
+        html_content = f"""<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>{title}</title>
+</head>
+<body>
+    {html_body}
+    <div class="document-footer">
+        <p>Generiert am {current_date}</p>
+        <p class="tagline"><strong>HayMAS</strong> — Dr. Hayward's AI Agent Army</p>
+    </div>
+</body>
+</html>"""
+        
+        css = CSS(filename=str(PDF_CSS_PATH)) if PDF_CSS_PATH.exists() else None
+        html_doc = HTML(string=html_content)
+        
+        return html_doc.write_pdf(stylesheets=[css] if css else None)
+    except (OSError, ImportError):
+        return None
+
+
+class EnhancedPDF(FPDF):
+    """Verbesserter PDF-Generator mit Tabellen-Support."""
     
     def __init__(self):
         super().__init__()
-        self.set_margins(self.LEFT_MARGIN, 15, self.RIGHT_MARGIN)
+        self.set_margins(20, 20, 20)
         self.add_page()
         self.set_auto_page_break(auto=True, margin=25)
+        self.set_font('Helvetica', '', 10)
         
     def header(self):
-        pass
+        if self.page_no() > 1:
+            self.set_font('Helvetica', 'I', 8)
+            self.set_text_color(128)
+            self.cell(0, 10, 'HayMAS', align='R')
+            self.ln(5)
         
     def footer(self):
         self.set_y(-15)
-        self.set_font('Helvetica', 'I', 9)
-        self.set_text_color(128, 128, 128)
+        self.set_font('Helvetica', 'I', 8)
+        self.set_text_color(128)
         self.cell(0, 10, f'Seite {self.page_no()}', align='C')
     
-    def _reset_x(self):
-        """X-Position auf linken Rand zuruecksetzen."""
-        self.set_x(self.LEFT_MARGIN)
+    def render_table(self, rows: List[List[str]]):
+        """Rendert eine Markdown-Tabelle."""
+        if not rows:
+            return
+            
+        # Spaltenbreiten berechnen
+        num_cols = len(rows[0])
+        col_width = 170 / num_cols  # 210mm - 2*20mm margins
         
+        self.set_font('Helvetica', '', 9)
+        
+        for i, row in enumerate(rows):
+            # Header-Zeile
+            if i == 0:
+                self.set_fill_color(240, 240, 240)
+                self.set_font('Helvetica', 'B', 9)
+            else:
+                self.set_fill_color(255, 255, 255)
+                self.set_font('Helvetica', '', 9)
+            
+            # Zeilenhöhe basierend auf Inhalt
+            max_lines = 1
+            for cell in row:
+                lines = len(self._clean_text(cell)) / (col_width / 2)
+                max_lines = max(max_lines, int(lines) + 1)
+            
+            row_height = max(6, max_lines * 5)
+            
+            for j, cell in enumerate(row):
+                x_before = self.get_x()
+                self.set_draw_color(200, 200, 200)
+                self.multi_cell(col_width, row_height / max_lines, 
+                               self._clean_text(cell), border=1, 
+                               fill=(i == 0), new_x='RIGHT', new_y='TOP')
+                if j < num_cols - 1:
+                    self.set_xy(x_before + col_width, self.get_y() - row_height / max_lines * max_lines)
+            
+            self.ln(row_height)
+        
+        self.ln(5)
+    
     def render_markdown(self, md_text: str):
-        """Markdown-Text zu PDF rendern."""
+        """Markdown zu PDF rendern mit Tabellen-Support."""
         lines = md_text.split('\n')
         in_code_block = False
+        table_rows = []
+        in_table = False
         
-        for line in lines:
+        i = 0
+        while i < len(lines):
+            line = lines[i]
             stripped = line.strip()
-            self._reset_x()  # Immer X zuruecksetzen
             
-            # Code-Block Start/Ende
+            # Tabellen-Erkennung
+            if '|' in stripped and not in_code_block:
+                # Separator-Zeile (|---|---|)
+                if re.match(r'^[\|\s\-:]+$', stripped):
+                    i += 1
+                    continue
+                
+                # Tabellen-Zeile
+                cells = [c.strip() for c in stripped.split('|')]
+                cells = [c for c in cells if c]  # Leere Zellen am Rand entfernen
+                
+                if cells:
+                    if not in_table:
+                        in_table = True
+                        table_rows = []
+                    table_rows.append(cells)
+                    i += 1
+                    continue
+            elif in_table:
+                # Tabelle beenden und rendern
+                self.render_table(table_rows)
+                table_rows = []
+                in_table = False
+            
+            # Code-Block
             if stripped.startswith('```'):
                 in_code_block = not in_code_block
                 if in_code_block:
                     self.ln(3)
+                i += 1
                 continue
                 
-            # Code-Block Inhalt
             if in_code_block:
                 self.set_font('Courier', '', 8)
                 self.set_fill_color(245, 245, 245)
-                clean_line = self._clean_text(line) if line.strip() else ' '
-                self.multi_cell(self.TEXT_WIDTH, 4, clean_line, fill=True)
+                self.multi_cell(170, 4, self._clean_text(line) or ' ', fill=True)
+                i += 1
                 continue
             
             # Leere Zeilen
             if not stripped:
                 self.ln(3)
+                i += 1
                 continue
-                
-            # H1
+            
+            # Überschriften
             if stripped.startswith('# '):
                 self.ln(5)
-                self.set_font('Helvetica', 'B', 18)
+                self.set_font('Helvetica', 'B', 16)
                 self.set_text_color(17, 17, 17)
-                text = self._clean_text(stripped[2:])
-                self.multi_cell(self.TEXT_WIDTH, 9, text)
+                self.multi_cell(170, 8, self._clean_text(stripped[2:]))
                 self.set_draw_color(51, 51, 51)
-                self.line(self.LEFT_MARGIN, self.get_y(), self.LEFT_MARGIN + self.TEXT_WIDTH, self.get_y())
+                self.line(20, self.get_y(), 190, self.get_y())
                 self.ln(5)
+                i += 1
                 continue
                 
-            # H2
             if stripped.startswith('## '):
                 self.ln(6)
-                self.set_font('Helvetica', 'B', 14)
+                self.set_font('Helvetica', 'B', 13)
                 self.set_text_color(34, 34, 34)
-                text = self._clean_text(stripped[3:])
-                self.multi_cell(self.TEXT_WIDTH, 7, text)
+                self.multi_cell(170, 7, self._clean_text(stripped[3:]))
                 self.ln(2)
+                i += 1
                 continue
                 
-            # H3
             if stripped.startswith('### '):
                 self.ln(4)
-                self.set_font('Helvetica', 'B', 12)
+                self.set_font('Helvetica', 'B', 11)
                 self.set_text_color(51, 51, 51)
-                text = self._clean_text(stripped[4:])
-                self.multi_cell(self.TEXT_WIDTH, 6, text)
+                self.multi_cell(170, 6, self._clean_text(stripped[4:]))
                 self.ln(2)
+                i += 1
                 continue
                 
-            # H4
             if stripped.startswith('#### '):
                 self.ln(3)
-                self.set_font('Helvetica', 'B', 11)
+                self.set_font('Helvetica', 'B', 10)
                 self.set_text_color(68, 68, 68)
-                text = self._clean_text(stripped[5:])
-                self.multi_cell(self.TEXT_WIDTH, 5, text)
+                self.multi_cell(170, 5, self._clean_text(stripped[5:]))
                 self.ln(1)
+                i += 1
                 continue
-                
+            
             # Horizontale Linie
             if stripped in ['---', '***', '___']:
                 self.ln(5)
                 self.set_draw_color(200, 200, 200)
-                self.line(self.LEFT_MARGIN, self.get_y(), self.LEFT_MARGIN + self.TEXT_WIDTH, self.get_y())
+                self.line(20, self.get_y(), 190, self.get_y())
                 self.ln(5)
+                i += 1
                 continue
-                
-            # Ungeordnete Liste
+            
+            # Listen
             if stripped.startswith('- ') or stripped.startswith('* '):
                 self.set_font('Helvetica', '', 10)
                 self.set_text_color(64, 64, 64)
-                text = self._clean_text(stripped[2:])
-                self.cell(8, 5, '-')
-                self.multi_cell(self.TEXT_WIDTH - 8, 5, text)
+                self.cell(8, 5, chr(149))  # Bullet point
+                self.multi_cell(162, 5, self._clean_text(stripped[2:]))
+                i += 1
                 continue
                 
-            # Geordnete Liste (1. 2. etc.)
             if len(stripped) > 2 and stripped[0].isdigit() and '.' in stripped[:4]:
                 self.set_font('Helvetica', '', 10)
                 self.set_text_color(64, 64, 64)
                 dot_pos = stripped.find('.')
                 num = stripped[:dot_pos]
-                text = self._clean_text(stripped[dot_pos+1:].strip())
                 self.cell(10, 5, f"{num}.")
-                self.multi_cell(self.TEXT_WIDTH - 10, 5, text)
+                self.multi_cell(160, 5, self._clean_text(stripped[dot_pos+1:].strip()))
+                i += 1
                 continue
-                
-            # Blockquote
-            if stripped.startswith('>'):
-                self.set_font('Helvetica', 'I', 10)
-                self.set_text_color(85, 85, 85)
-                text = self._clean_text(stripped[1:].strip())
-                self.cell(5, 5, '|')
-                self.multi_cell(self.TEXT_WIDTH - 5, 5, text)
-                continue
-                
-            # Normaler Paragraph
+            
+            # Normaler Text
             self.set_font('Helvetica', '', 10)
             self.set_text_color(26, 26, 26)
             text = self._clean_text(stripped)
-            if text:  # Nur wenn Text vorhanden
-                self.multi_cell(self.TEXT_WIDTH, 5, text)
+            if text:
+                self.multi_cell(170, 5, text)
             
-    def _clean_text(self, text: str) -> str:
-        """Markdown-Formatierung entfernen und Text ASCII-kompatibel machen."""
-        import re
-        import unicodedata
+            i += 1
         
-        # Bold und Italic entfernen
+        # Falls Tabelle am Ende
+        if in_table and table_rows:
+            self.render_table(table_rows)
+        
+        # Footer mit Branding
+        self.ln(10)
+        self.set_draw_color(200, 200, 200)
+        self.line(20, self.get_y(), 190, self.get_y())
+        self.ln(5)
+        self.set_font('Helvetica', 'I', 8)
+        self.set_text_color(128)
+        now = datetime.now()
+        date_str = f"{now.day}. {GERMAN_MONTHS[now.month]} {now.year}"
+        self.cell(0, 5, f"Generiert am {date_str}", align='C')
+        self.ln(4)
+        self.cell(0, 5, "HayMAS - Dr. Hayward's AI Agent Army", align='C')
+    
+    def _clean_text(self, text: str) -> str:
+        """Markdown-Formatierung entfernen."""
+        # Bold und Italic
         text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
         text = re.sub(r'\*(.+?)\*', r'\1', text)
         text = re.sub(r'__(.+?)__', r'\1', text)
         text = re.sub(r'_(.+?)_', r'\1', text)
         # Inline Code
         text = re.sub(r'`(.+?)`', r'\1', text)
-        # Links: [text](url) -> text
+        # Links
         text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
-        
-        # Alle Arten von Anführungszeichen normalisieren
-        text = re.sub(r'[""„‟«»\u201c\u201d\u201e\u201f\u00ab\u00bb]', '"', text)
-        text = re.sub(r'[''‚‛\u2018\u2019\u201a\u201b]', "'", text)
-        
-        # Striche normalisieren
-        text = re.sub(r'[–—‒―\u2013\u2014\u2012\u2015]', '-', text)
-        
-        # Punkte und Bullets
-        text = re.sub(r'[…\u2026]', '...', text)
-        text = re.sub(r'[•·●○■□▪▫★☆\u2022\u00b7\u25cf\u25cb\u25a0\u25a1]', '-', text)
-        
-        # Pfeile
-        text = re.sub(r'[→⇒➔➜►\u2192\u21d2]', '->', text)
-        text = re.sub(r'[←⇐◄\u2190\u21d0]', '<-', text)
-        
-        # Häkchen
-        text = re.sub(r'[✓✔☑\u2713\u2714]', '[x]', text)
-        text = re.sub(r'[✗✘☐\u2717\u2718]', '[ ]', text)
-        
-        # Mathematische Symbole
-        text = text.replace('×', 'x')
-        text = text.replace('÷', '/')
-        text = text.replace('±', '+/-')
-        text = text.replace('≈', '~')
-        text = text.replace('≠', '!=')
-        text = text.replace('≤', '<=')
-        text = text.replace('≥', '>=')
-        text = text.replace('∞', 'oo')
-        
-        # Symbole
-        text = text.replace('™', '(TM)')
-        text = text.replace('®', '(R)')
-        text = text.replace('©', '(c)')
-        text = text.replace('€', 'EUR')
-        text = text.replace('°', ' Grad')
-        
-        # Unicode-Normalisierung (NFKD zerlegt Zeichen)
-        text = unicodedata.normalize('NFKD', text)
-        
-        # Nur ASCII-Zeichen behalten + deutsche Umlaute manuell ersetzen
-        result = []
-        for char in text:
-            if ord(char) < 128:
-                result.append(char)
-            elif char in 'äöüÄÖÜß':
-                # Umlaute durch Umschreibungen ersetzen
-                umlaut_map = {'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 
-                             'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue', 'ß': 'ss'}
-                result.append(umlaut_map[char])
-            elif char in 'éèêëáàâãåæçíìîïñóòôõøúùûýÿ':
-                # Akzentbuchstaben vereinfachen
-                accent_map = {'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-                             'á': 'a', 'à': 'a', 'â': 'a', 'ã': 'a', 'å': 'a', 'æ': 'ae',
-                             'ç': 'c', 'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-                             'ñ': 'n', 'ó': 'o', 'ò': 'o', 'ô': 'o', 'õ': 'o', 'ø': 'o',
-                             'ú': 'u', 'ù': 'u', 'û': 'u', 'ý': 'y', 'ÿ': 'y'}
-                result.append(accent_map.get(char, ''))
-            elif char in 'ÉÈÊËÁÀÂÃÅÆÇÍÌÎÏÑÓÒÔÕØÚÙÛÝ':
-                accent_map = {'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
-                             'Á': 'A', 'À': 'A', 'Â': 'A', 'Ã': 'A', 'Å': 'A', 'Æ': 'AE',
-                             'Ç': 'C', 'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
-                             'Ñ': 'N', 'Ó': 'O', 'Ò': 'O', 'Ô': 'O', 'Õ': 'O', 'Ø': 'O',
-                             'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ý': 'Y'}
-                result.append(accent_map.get(char, ''))
-            # Andere Zeichen ignorieren
-        
-        return ''.join(result)
+        # Sonderzeichen normalisieren
+        text = text.replace('–', '-').replace('—', '-')
+        text = text.replace('"', '"').replace('"', '"')
+        text = text.replace(''', "'").replace(''', "'")
+        text = text.replace('…', '...')
+        text = text.replace('‑', '-')
+        # Umlaute für FPDF
+        replacements = {
+            'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss',
+            'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue'
+        }
+        for old, new in replacements.items():
+            text = text.replace(old, new)
+        # Nur druckbare ASCII
+        return ''.join(c if ord(c) < 128 else '' for c in text)
+
+
+def generate_pdf_from_markdown(md_content: str, title: str = "HayMAS Artikel") -> bytes:
+    """
+    Konvertiert Markdown zu PDF.
+    
+    Versucht zuerst WeasyPrint (beste Qualität), 
+    fällt auf FPDF mit Tabellen-Support zurück.
+    """
+    # Titel aus H1 extrahieren
+    h1_match = re.search(r'^#\s+(.+)$', md_content, re.MULTILINE)
+    if h1_match:
+        title = h1_match.group(1).strip()
+    
+    # Versuche WeasyPrint
+    pdf_bytes = _try_weasyprint_pdf(md_content, title)
+    if pdf_bytes:
+        return pdf_bytes
+    
+    # Fallback: FPDF mit Tabellen-Support
+    pdf = EnhancedPDF()
+    pdf.render_markdown(md_content)
+    return pdf.output()
 
 
 @app.get("/api/articles/{filename}/pdf")
@@ -443,7 +609,8 @@ def get_article_pdf(filename: str):
     """
     Artikel als PDF herunterladen.
     
-    Konvertiert die Markdown-Datei direkt zu PDF.
+    Konvertiert die Markdown-Datei zu einem professionell gestalteten PDF
+    mit WeasyPrint (Tabellen, Typography, Fußzeilen).
     """
     filepath = os.path.join(OUTPUT_DIR, filename)
     
@@ -455,20 +622,16 @@ def get_article_pdf(filename: str):
         md_content = f.read()
     
     # PDF generieren
-    pdf = MarkdownPDF()
-    pdf.render_markdown(md_content)
-    
-    # PDF in BytesIO schreiben
-    pdf_buffer = io.BytesIO()
-    pdf_output = pdf.output()
-    pdf_buffer.write(pdf_output)
-    pdf_buffer.seek(0)
+    try:
+        pdf_bytes = generate_pdf_from_markdown(md_content, filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"PDF-Generierung fehlgeschlagen: {str(e)}")
     
     # PDF-Dateiname
     pdf_filename = filename.replace('.md', '.pdf')
     
     return Response(
-        content=pdf_buffer.read(),
+        content=bytes(pdf_bytes),
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{pdf_filename}"'
@@ -492,6 +655,87 @@ def get_log(log_filename: str):
     
     with open(filepath, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+@app.post("/api/refine-prompt")
+def refine_prompt(request: RefinePromptRequest):
+    """
+    Optimiert einen User-Prompt für bessere Ergebnisse.
+    
+    Kann regelbasiert (schnell) oder LLM-basiert (intelligenter) arbeiten.
+    
+    Returns:
+        - analysis: Erkannte Parameter aus dem Prompt
+        - optimized_prompt: Der optimierte Prompt
+        - options: Verfügbare Optionen für das Frontend
+    """
+    optimizer = PromptOptimizerAgent()
+    
+    # Verfügbare Optionen für Frontend
+    format_options = [
+        {"value": "overview", "label": "Kompakte Übersicht", "pages": "3-5 Seiten", "description": "Kurzer Überblick über die wichtigsten Punkte"},
+        {"value": "article", "label": "Fachartikel", "pages": "8-10 Seiten", "description": "Ausgewogener Artikel mit Tiefe"},
+        {"value": "report", "label": "Expertenbericht", "pages": "10-15 Seiten", "description": "Umfassender Bericht mit allen Details"},
+        {"value": "deep_dive", "label": "Deep-Dive Analyse", "pages": "15-20 Seiten", "description": "Tiefgehende Analyse für Spezialisten"}
+    ]
+    
+    audience_options = [
+        {"value": "experts", "label": "Fachexperten", "tone": "wissenschaftlich", "description": "Technisch präzise, setzt Vorwissen voraus"},
+        {"value": "management", "label": "Management / Entscheider", "tone": "praxisorientiert", "description": "Strategisch, Business-fokussiert"},
+        {"value": "general", "label": "Allgemein / Einsteiger", "tone": "erklärend", "description": "Einführend, erklärt Grundlagen"}
+    ]
+    
+    if request.use_ai:
+        # LLM-basierte Optimierung (langsamer, aber intelligenter)
+        result = None
+        for event in optimizer.analyze_and_optimize(
+            request.question,
+            user_preferences={
+                "format": request.format,
+                "audience": request.audience
+            } if request.format or request.audience else None
+        ):
+            pass  # Events verarbeiten
+        
+        # Generator durchlaufen für Return-Wert
+        gen = optimizer.analyze_and_optimize(
+            request.question,
+            user_preferences={
+                "format": request.format,
+                "audience": request.audience
+            } if request.format or request.audience else None
+        )
+        try:
+            while True:
+                next(gen)
+        except StopIteration as e:
+            result = e.value
+        
+        return {
+            **result,
+            "options": {
+                "formats": format_options,
+                "audiences": audience_options
+            }
+        }
+    else:
+        # Regelbasierte Optimierung (schnell)
+        format_choice = request.format or "report"
+        audience_choice = request.audience or "experts"
+        
+        result = optimizer.quick_optimize(
+            request.question,
+            format_choice,
+            audience_choice
+        )
+        
+        return {
+            **result,
+            "options": {
+                "formats": format_options,
+                "audiences": audience_options
+            }
+        }
 
 
 @app.post("/api/analyze")
