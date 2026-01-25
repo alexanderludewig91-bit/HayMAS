@@ -95,7 +95,12 @@ class EditorVerdict:
                    summary="Fallback", raw_feedback=response_text)
     
     def has_content_gaps(self) -> bool:
+        """Prüft ob Issues vom Typ content_gap vorhanden sind."""
         return any(i.type == "content_gap" and i.suggested_action == "research" for i in self.issues)
+    
+    def needs_research(self) -> bool:
+        """Prüft ob irgendein Issue Recherche erfordert (content_gap, hallucination, etc.)."""
+        return any(i.suggested_action == "research" for i in self.issues)
     
     def get_research_queries(self) -> List[str]:
         return [i.research_query for i in self.issues if i.research_query and i.suggested_action == "research"]

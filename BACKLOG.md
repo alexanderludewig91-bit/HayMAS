@@ -11,7 +11,8 @@ Diese Issues müssen als nächstes behoben werden!
 | Status | Issue | Beschreibung | Auswirkung |
 |--------|-------|--------------|------------|
 | ⬜ | **ClaimMiner JSON-Parsing** | Claude liefert manchmal kein valides JSON → Fallback mit 0 Claims | Artikel ohne Quellen! |
-| ⬜ | **Gemini-Verifikation** | Phase 8 sollte Cross-LLM Verification mit Gemini haben | Keine Halluzinations-Prüfung |
+| 🔄 | **Halluzinations-Check via Editor** | Editor-Prompt schärfen: ClaimRegister + Quellen mitgeben, explizit nach unbelegten Fakten fragen | Keine Halluzinations-Prüfung |
+| ⏸️ | **Gemini-Verifikation (optional)** | Cross-LLM als Premium-Feature für kritische Artikel – erstmal Editor schärfen | Marginaler Mehrwert bei doppelten Kosten |
 | ⬜ | **Independence Score** | C-Claims brauchen 2+ **unabhängige** Quellen (nicht vom selben Publisher) | Quellenvielfalt nicht garantiert |
 | ⬜ | **Claim Coverage Tracking** | Prüfen ob alle Claims im Artikel vorkommen | Claims können fehlen |
 | ⬜ | **Halluzinations-Check** | Prüfen ob Writer Fakten ohne Quellen erfunden hat | Erfundene Quellen möglich |
@@ -19,8 +20,34 @@ Diese Issues müssen als nächstes behoben werden!
 
 ### Nächste Schritte:
 1. **ClaimMiner robuster machen** - JSON-Parsing mit Fallback verbessern
-2. **Gemini für Verification einbauen** - Cross-LLM Check in Phase 8
-3. **Halluzinations-Detection** - Writer-Output gegen ClaimRegister prüfen
+2. **Editor-Prompt schärfen** - ClaimRegister + Quellen-Snippets mitgeben, neuer Issue-Typ `hallucination`
+3. **Artikellänge fixen** - Format-Parameter durchreichen, Ober- UND Untergrenzen
+
+### Halluzinations-Check (Details)
+
+Der bestehende Editorial Review (Claude) wird erweitert:
+
+**Input erweitern:**
+- Artikel (wie bisher)
+- ClaimRegister mit allen Claims
+- Quellen-Snippets (Titel + URL + Kernaussage)
+
+**Neue Prüffrage im Prompt:**
+> "Prüfe: Welche Faktenbehauptungen im Artikel haben KEINE Quellenreferenz [X]? Liste diese als Issue mit type='hallucination'."
+
+**Neuer Issue-Typ:**
+```json
+{
+  "type": "hallucination",
+  "description": "Aussage X hat keine Quellenreferenz",
+  "location": "Abschnitt Y, Satz Z",
+  "action": "remove_or_research"
+}
+```
+
+**Konsequenz:**
+- `action: "remove"` → Writer entfernt die Passage
+- `action: "research"` → GapRetriever sucht Quelle, dann Writer ergänzt
 
 ---
 

@@ -1,4 +1,4 @@
-export type StudioState = 'idle' | 'analyzing' | 'planning' | 'producing' | 'complete';
+export type StudioState = 'idle' | 'analyzing' | 'planning' | 'producing' | 'finished' | 'complete';
 
 export type EventType = 'thinking' | 'tool_call' | 'tool_result' | 'response' | 'error' | 'status';
 

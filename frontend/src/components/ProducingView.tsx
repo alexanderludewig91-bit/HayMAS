@@ -1,10 +1,12 @@
-import { Loader2, Square, CheckCircle, Edit3, Search, AlertTriangle } from 'lucide-react';
+import { Loader2, Square, CheckCircle, Edit3, Search, AlertTriangle, ArrowRight, Clock } from 'lucide-react';
 import type { AgentEvent, EditorVerdict } from '../types';
 
 interface ProducingViewProps {
   question: string;
   events: AgentEvent[];
   onCancel: () => void;
+  isFinished?: boolean;
+  onViewArticle?: () => void;
 }
 
 const phaseFromEvents = (events: AgentEvent[]): string => {
@@ -104,9 +106,12 @@ const EditorVerdictDisplay = ({ verdict }: { verdict: EditorVerdict }) => {
   );
 };
 
-export function ProducingView({ question, events, onCancel }: ProducingViewProps) {
+export function ProducingView({ question, events, onCancel, isFinished, onViewArticle }: ProducingViewProps) {
   const phase = phaseFromEvents(events);
-  const progress = Math.min((events.length / 30) * 100, 95);
+  const progress = isFinished ? 100 : Math.min((events.length / 30) * 100, 95);
+  
+  // Events umkehren - neueste oben
+  const reversedEvents = [...events].reverse();
 
   return (
     <div className="flex-1 flex flex-col max-w-3xl mx-auto w-full p-6">
@@ -114,16 +119,33 @@ export function ProducingView({ question, events, onCancel }: ProducingViewProps
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 text-neutral-900">
-            <Loader2 size={18} className="animate-spin" />
-            <span className="font-medium">{phase}</span>
+            {isFinished ? (
+              <CheckCircle size={18} className="text-green-600" />
+            ) : (
+              <Loader2 size={18} className="animate-spin" />
+            )}
+            <span className="font-medium">{isFinished ? 'Abgeschlossen' : phase}</span>
+            <span className="text-xs text-neutral-400 ml-2">
+              {events.length} Schritte
+            </span>
           </div>
-          <button
-            onClick={onCancel}
-            className="flex items-center gap-1 px-3 py-1.5 text-sm text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors"
-          >
-            <Square size={14} />
-            Abbrechen
-          </button>
+          {isFinished ? (
+            <button
+              onClick={onViewArticle}
+              className="flex items-center gap-2 px-4 py-2 bg-neutral-900 text-white text-sm font-medium rounded-lg hover:bg-neutral-800 transition-colors"
+            >
+              Zum Artikel
+              <ArrowRight size={16} />
+            </button>
+          ) : (
+            <button
+              onClick={onCancel}
+              className="flex items-center gap-1 px-3 py-1.5 text-sm text-neutral-600 hover:text-neutral-900 hover:bg-neutral-100 rounded-lg transition-colors"
+            >
+              <Square size={14} />
+              Abbrechen
+            </button>
+          )}
         </div>
         <p className="text-sm text-neutral-500 truncate">{question}</p>
       </div>
@@ -131,14 +153,15 @@ export function ProducingView({ question, events, onCancel }: ProducingViewProps
       {/* Progress */}
       <div className="h-1 bg-neutral-100 rounded-full mb-6 overflow-hidden">
         <div
-          className="h-full bg-neutral-900 transition-all duration-300"
+          className={`h-full transition-all duration-300 ${isFinished ? 'bg-green-600' : 'bg-neutral-900'}`}
           style={{ width: `${progress}%` }}
         />
       </div>
 
-      {/* Events */}
+      {/* Events - neueste oben */}
       <div className="flex-1 overflow-y-auto space-y-2">
-        {events.map((event, i) => {
+        {reversedEvents.map((event, i) => {
+          const originalIndex = events.length - 1 - i;
           // Prüfe ob dies ein Editor-Verdict Event ist
           const verdictData = event.data?.verdict as EditorVerdict | undefined;
           const isVerdictEvent = verdictData && verdictData.verdict;
@@ -146,21 +169,31 @@ export function ProducingView({ question, events, onCancel }: ProducingViewProps
           // Spezielle Darstellung für Editor-Verdict
           if (isVerdictEvent) {
             return (
-              <div key={i} className="space-y-2">
+              <div key={originalIndex} className="space-y-2">
                 <div className="flex items-center gap-2 text-xs text-neutral-500">
-                  <span>{event.agent}</span>
+                  <span className="font-medium">{event.agent}</span>
                   <span>·</span>
                   <span>Editor-Bewertung</span>
+                  <span className="text-neutral-400 ml-auto">#{originalIndex + 1}</span>
                 </div>
                 <EditorVerdictDisplay verdict={verdictData} />
               </div>
             );
           }
           
-          // Standard Event-Darstellung
+          // Standard Event-Darstellung mit mehr Details
+          const eventTypeLabel = {
+            thinking: 'Denkt...',
+            tool_call: 'Tool-Aufruf',
+            tool_result: 'Tool-Ergebnis',
+            response: 'Antwort',
+            error: 'Fehler',
+            status: 'Status'
+          }[event.type] || event.type;
+          
           return (
             <div
-              key={i}
+              key={originalIndex}
               className={`p-3 rounded-lg text-sm ${
                 event.type === 'error'
                   ? 'bg-red-50 border-l-2 border-red-400'
@@ -170,17 +203,69 @@ export function ProducingView({ question, events, onCancel }: ProducingViewProps
                   ? 'bg-purple-50 border-l-2 border-purple-400'
                   : event.content.includes('Nachrecherche')
                   ? 'bg-blue-50 border-l-2 border-blue-400'
+                  : event.type === 'tool_call' || event.type === 'tool_result'
+                  ? 'bg-amber-50 border-l-2 border-amber-300'
                   : 'bg-neutral-50 border-l-2 border-neutral-200'
               }`}
             >
               <div className="flex items-start gap-2">
-                <span>{eventIcon(event.type)}</span>
+                <span className="text-lg">{eventIcon(event.type)}</span>
                 <div className="flex-1 min-w-0">
-                  <span className="font-medium text-neutral-900">{event.agent}</span>
-                  <p className="text-neutral-600 break-words">
-                    {event.content.slice(0, 200)}
-                    {event.content.length > 200 && '...'}
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold text-neutral-900">{event.agent}</span>
+                    <span className="text-xs px-1.5 py-0.5 bg-white/50 rounded text-neutral-500">
+                      {eventTypeLabel}
+                    </span>
+                    <span className="text-xs text-neutral-400 ml-auto">#{originalIndex + 1}</span>
+                  </div>
+                  <p className="text-neutral-700 break-words">
+                    {event.content.slice(0, 300)}
+                    {event.content.length > 300 && '...'}
                   </p>
+                  {/* Zusätzliche Details aus event.data */}
+                  {event.data && Object.keys(event.data).length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-black/5 text-xs text-neutral-500 flex flex-wrap gap-x-4 gap-y-1">
+                      {event.data.article_path && (
+                        <div className="flex items-center gap-1">
+                          <span>📄</span>
+                          <span className="font-mono">{String(event.data.article_path).split('/').pop()}</span>
+                        </div>
+                      )}
+                      {event.data.claims_count && (
+                        <span>✓ {event.data.claims_count} Claims</span>
+                      )}
+                      {event.data.a_claims !== undefined && (
+                        <span className="text-green-600">A:{event.data.a_claims}</span>
+                      )}
+                      {event.data.b_claims !== undefined && (
+                        <span className="text-blue-600">B:{event.data.b_claims}</span>
+                      )}
+                      {event.data.c_claims !== undefined && (
+                        <span className="text-amber-600">C:{event.data.c_claims}</span>
+                      )}
+                      {event.data.total_sources && (
+                        <span>📚 {event.data.total_sources} Quellen</span>
+                      )}
+                      {event.data.claims_fulfilled !== undefined && event.data.claims_processed && (
+                        <span>✅ {event.data.claims_fulfilled}/{event.data.claims_processed} Claims erfüllt</span>
+                      )}
+                      {event.data.tools_used && Array.isArray(event.data.tools_used) && (
+                        <span>🔧 {(event.data.tools_used as string[]).join(', ')}</span>
+                      )}
+                      {event.data.word_count && (
+                        <span>📝 {event.data.word_count} Wörter</span>
+                      )}
+                      {event.data.char_count && (
+                        <span>({Math.round(Number(event.data.char_count) / 1000)}k Zeichen)</span>
+                      )}
+                      {event.data.sources_rated && (
+                        <span>⚖️ {event.data.sources_rated} bewertet</span>
+                      )}
+                      {event.data.model_used && (
+                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">{event.data.model_used}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

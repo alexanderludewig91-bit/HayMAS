@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useStudio } from '../hooks/useStudio';
 import { Header } from './Header';
 import { IdleView } from './IdleView';
-import { PlanningView } from './PlanningView';
 import { ProducingView } from './ProducingView';
 import { CompleteView } from './CompleteView';
 import { ArchiveDrawer } from './ArchiveDrawer';
@@ -17,20 +16,14 @@ export function Studio() {
     articleContent,
     articlePath,
     error,
-    plan,
     isAnalyzing,
     archiveOpen,
     settingsOpen,
     tiers,
     setQuestion,
-    analyzeAndPlan,
-    updatePlan,
-    updateRound,
-    toggleRound,
-    setUseEditor,
-    startGeneration,
     startGenerationWithoutPlan,
     cancelGeneration,
+    viewArticle,
     reset,
     loadArticle,
     setArchiveOpen,
@@ -40,19 +33,10 @@ export function Studio() {
 
   // Prompt Refiner Modal State
   const [refinerOpen, setRefinerOpen] = useState(false);
-  const [refinerMode, setRefinerMode] = useState<'analyze' | 'quickstart'>('analyze');
 
-  // Öffnet den Refiner statt direkt zu starten
-  const handleAnalyzeClick = () => {
+  // Öffnet den Refiner vor dem Start
+  const handleStartClick = () => {
     if (question.trim()) {
-      setRefinerMode('analyze');
-      setRefinerOpen(true);
-    }
-  };
-
-  const handleQuickStartClick = () => {
-    if (question.trim()) {
-      setRefinerMode('quickstart');
       setRefinerOpen(true);
     }
   };
@@ -63,17 +47,10 @@ export function Studio() {
     // Optimierten Prompt übernehmen
     setQuestion(optimizedPrompt);
     
-    // Je nach Modus weitermachen
-    if (refinerMode === 'analyze') {
-      // Kurze Verzögerung damit der State aktualisiert wird
-      setTimeout(() => {
-        analyzeAndPlan();
-      }, 50);
-    } else {
-      setTimeout(() => {
-        startGenerationWithoutPlan();
-      }, 50);
-    }
+    // Direkt starten (Evidence-Gated Workflow)
+    setTimeout(() => {
+      startGenerationWithoutPlan();
+    }, 50);
   };
 
   return (
@@ -95,32 +72,18 @@ export function Studio() {
           <IdleView
             question={question}
             onQuestionChange={setQuestion}
-            onAnalyze={handleAnalyzeClick}
-            onQuickStart={handleQuickStartClick}
-            isAnalyzing={isAnalyzing}
+            onStart={handleStartClick}
+            isGenerating={isAnalyzing}
           />
         )}
 
-        {state === 'planning' && plan && (
-          <PlanningView
-            question={question}
-            plan={plan}
-            tiers={tiers}
-            onUpdatePlan={updatePlan}
-            onToggleRound={toggleRound}
-            onUpdateRound={updateRound}
-            onSetUseEditor={setUseEditor}
-            onSetTier={setTier}
-            onStart={startGeneration}
-            onBack={reset}
-          />
-        )}
-
-        {state === 'producing' && (
+        {(state === 'producing' || state === 'finished') && (
           <ProducingView
             question={question}
             events={events}
             onCancel={cancelGeneration}
+            isFinished={state === 'finished'}
+            onViewArticle={viewArticle}
           />
         )}
 

@@ -1,4 +1,4 @@
-import { X, Clock, Cpu, Coins, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { X, Clock, Cpu, Coins, CheckCircle, XCircle, AlertCircle, Wrench } from 'lucide-react';
 import type { SessionLog } from '../lib/api';
 
 interface LogDrawerProps {
@@ -120,27 +120,70 @@ export function LogDrawer({ open, onClose, log, loading }: LogDrawerProps) {
                   Einstellungen
                 </h3>
                 <div className="bg-neutral-50 rounded-lg p-3 text-sm">
+                  {log.settings.mode && (
+                    <div className="flex justify-between py-1">
+                      <span className="text-neutral-500">Modus</span>
+                      <span className="font-medium">
+                        {log.settings.mode === 'evidence_gated' ? 'Evidence-Gated' : log.settings.mode}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between py-1">
-                    <span className="text-neutral-500">Recherche-Runden</span>
-                    <span className="font-medium">{log.settings.research_rounds}</span>
+                    <span className="text-neutral-500">Recherche</span>
+                    <span className="font-medium">
+                      {typeof log.settings.research_rounds === 'string' 
+                        ? log.settings.research_rounds 
+                        : `${log.settings.research_rounds} Runden`}
+                    </span>
                   </div>
                   <div className="flex justify-between py-1">
                     <span className="text-neutral-500">Editor</span>
                     <span className="font-medium">{log.settings.use_editor ? 'Ja' : 'Nein'}</span>
                   </div>
-                  {Object.entries(log.settings.tiers).length > 0 && (
+                  {/* Verwendete Modelle aus Timeline extrahieren */}
+                  {log.timeline && log.timeline.length > 0 && (
                     <div className="pt-2 mt-2 border-t border-neutral-200">
-                      <div className="text-xs text-neutral-400 mb-1">Modell-Tiers</div>
-                      {Object.entries(log.settings.tiers).map(([agent, tier]) => (
-                        <div key={agent} className="flex justify-between py-0.5">
-                          <span className="text-neutral-500 capitalize">{agent}</span>
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${
-                            tier === 'premium' ? 'bg-amber-100 text-amber-700' : 'bg-neutral-200 text-neutral-600'
-                          }`}>
-                            {tier}
-                          </span>
-                        </div>
-                      ))}
+                      <div className="text-xs text-neutral-400 mb-2">Verwendete Modelle</div>
+                      {(() => {
+                        // Einzigartige Agent→Modell-Kombinationen extrahieren
+                        const modelsByAgent = new Map<string, { model: string; provider: string; tokens: { input: number; output: number } }>();
+                        log.timeline.forEach(step => {
+                          if (step.model && step.model !== 'tool-based') {
+                            const existing = modelsByAgent.get(step.agent);
+                            if (existing) {
+                              // Tokens akkumulieren
+                              if (step.tokens) {
+                                existing.tokens.input += step.tokens.input;
+                                existing.tokens.output += step.tokens.output;
+                              }
+                            } else {
+                              modelsByAgent.set(step.agent, {
+                                model: step.model,
+                                provider: step.provider,
+                                tokens: step.tokens ? { ...step.tokens } : { input: 0, output: 0 }
+                              });
+                            }
+                          }
+                        });
+                        return Array.from(modelsByAgent.entries()).map(([agent, info]) => (
+                          <div key={agent} className="py-1.5 border-b border-neutral-100 last:border-0">
+                            <div className="flex justify-between items-center">
+                              <span className="text-neutral-700 font-medium text-xs">{agent}</span>
+                              <span className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">
+                                {info.model}
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center mt-0.5">
+                              <span className="text-neutral-400 text-xs">{info.provider}</span>
+                              {info.tokens.input > 0 && (
+                                <span className="text-neutral-400 text-xs">
+                                  {(info.tokens.input / 1000).toFixed(1)}k / {(info.tokens.output / 1000).toFixed(1)}k tok
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ));
+                      })()}
                     </div>
                   )}
                 </div>
@@ -151,7 +194,7 @@ export function LogDrawer({ open, onClose, log, loading }: LogDrawerProps) {
                 <h3 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-3">
                   Timeline ({log.timeline.length} Schritte)
                 </h3>
-                <div className="space-y-2">
+                <div className="space-y-3">
                   {log.timeline.map((step, index) => (
                     <div
                       key={index}
@@ -161,38 +204,82 @@ export function LogDrawer({ open, onClose, log, loading }: LogDrawerProps) {
                         'border-neutral-200 bg-white'
                       }`}
                     >
+                      {/* Header: Agent, Action, Duration */}
                       <div className="flex items-start justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <StatusIcon status={step.status} />
                           <span className="font-medium text-sm">{step.agent}</span>
-                          <span className="text-xs text-neutral-400">{step.action}</span>
+                          <span className="text-xs px-1.5 py-0.5 bg-neutral-100 text-neutral-500 rounded">
+                            {step.action}
+                          </span>
                         </div>
-                        <span className="text-xs text-neutral-400">
+                        <span className="text-xs font-medium text-neutral-500">
                           {formatDuration(step.duration_ms)}
                         </span>
                       </div>
                       
-                      <div className="text-xs text-neutral-500 mb-2">
-                        <span className="px-1.5 py-0.5 bg-neutral-100 rounded mr-2">{step.model}</span>
-                        <span className="text-neutral-400">{step.provider}</span>
+                      {/* Model & Provider */}
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">
+                          {step.model}
+                        </span>
+                        <span className="text-xs text-neutral-400">{step.provider}</span>
+                        {step.tokens && (
+                          <span className="text-xs text-neutral-400 ml-auto">
+                            {step.tokens.input.toLocaleString()} → {step.tokens.output.toLocaleString()} tok
+                          </span>
+                        )}
                       </div>
 
-                      <div className="text-xs text-neutral-600 line-clamp-2 mb-2">
+                      {/* Tools verwendet */}
+                      {step.tool_calls && step.tool_calls.length > 0 && (
+                        <div className="flex items-center gap-2 mb-2">
+                          <Wrench size={12} className="text-neutral-400" />
+                          <div className="flex flex-wrap gap-1">
+                            {step.tool_calls.map((tool, i) => (
+                              <span key={i} className="text-xs px-1.5 py-0.5 bg-amber-50 text-amber-700 rounded">
+                                {tool}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Task Description */}
+                      <div className="text-xs text-neutral-600 mb-2">
                         {step.task}
                       </div>
 
-                      <div className="flex items-center gap-4 text-xs text-neutral-400">
-                        {step.tokens && (
-                          <span>Tokens: {step.tokens.input}/{step.tokens.output}</span>
-                        )}
-                        {step.tool_calls.length > 0 && (
-                          <span>Tools: {step.tool_calls.join(', ')}</span>
-                        )}
-                        {step.result_length && (
-                          <span>{step.result_length.toLocaleString()} Zeichen</span>
-                        )}
-                      </div>
+                      {/* Details Grid */}
+                      {step.details && Object.keys(step.details).length > 0 && (
+                        <div className="bg-neutral-50 rounded p-2 mt-2">
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                            {Object.entries(step.details).map(([key, value]) => (
+                              <div key={key} className="flex justify-between text-xs">
+                                <span className="text-neutral-500">
+                                  {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                                </span>
+                                <span className="font-medium text-neutral-700">
+                                  {Array.isArray(value) 
+                                    ? value.join(', ') 
+                                    : typeof value === 'number' 
+                                      ? value.toLocaleString()
+                                      : String(value)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
+                      {/* Result Length */}
+                      {step.result_length && !step.details && (
+                        <div className="text-xs text-neutral-400 mt-1">
+                          Ergebnis: {step.result_length.toLocaleString()} Zeichen
+                        </div>
+                      )}
+
+                      {/* Error */}
                       {step.error && (
                         <div className="mt-2 text-xs text-red-600 bg-red-100 rounded p-2">
                           {step.error}

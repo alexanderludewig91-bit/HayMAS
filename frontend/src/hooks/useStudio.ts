@@ -32,6 +32,7 @@ interface StudioStore {
   startGeneration: () => void;
   startGenerationWithoutPlan: () => void;
   cancelGeneration: () => void;
+  viewArticle: () => void;
   reset: () => void;
   loadArticle: (article: Article) => void;
   setArchiveOpen: (open: boolean) => void;
@@ -156,9 +157,9 @@ export function useStudio(): StudioStore {
         }
       },
       async () => {
-        // Done - fetch article content
-        setState('complete');
-        // Artikel laden nach kurzer Verzögerung
+        // Done - wechsle zu finished (zeigt Button zum Artikel)
+        setState('finished');
+        // Artikel im Hintergrund laden
         setTimeout(async () => {
           const lastEvent = events[events.length - 1];
           if (lastEvent?.data?.article_path) {
@@ -206,7 +207,9 @@ export function useStudio(): StudioStore {
         }
       },
       async () => {
-        setState('complete');
+        // Done - wechsle zu finished (zeigt Button zum Artikel)
+        setState('finished');
+        // Artikel im Hintergrund laden
         setTimeout(async () => {
           const lastEvent = events[events.length - 1];
           if (lastEvent?.data?.article_path) {
@@ -234,6 +237,11 @@ export function useStudio(): StudioStore {
   const cancelGeneration = useCallback(() => {
     cancelRef.current?.();
     setState('idle');
+  }, []);
+
+  // Vom finished-State zum Artikel wechseln
+  const viewArticle = useCallback(() => {
+    setState('complete');
   }, []);
 
   const reset = useCallback(() => {
@@ -283,6 +291,7 @@ export function useStudio(): StudioStore {
     startGeneration,
     startGenerationWithoutPlan,
     cancelGeneration,
+    viewArticle,
     reset,
     loadArticle,
     setArchiveOpen,

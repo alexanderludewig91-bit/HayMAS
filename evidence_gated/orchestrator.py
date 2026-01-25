@@ -160,7 +160,12 @@ class EvidenceGatedOrchestrator:
         # Logger initialisieren
         self.logger = SessionLogger(
             question=question,
-            settings={"mode": "evidence_gated", "tiers": self.tiers}
+            settings={
+                "mode": "evidence_gated",
+                "tiers": self.tiers,
+                "use_editor": True,  # EditorialReviewer ist immer aktiv
+                "research_rounds": "dynamisch"  # Claim-basierte Recherche statt fixer Runden
+            }
         )
         
         try:
@@ -305,8 +310,8 @@ class EvidenceGatedOrchestrator:
                     )
                     break
                     
-                elif verdict.verdict == "research" and verdict.has_content_gaps():
-                    # Nachrecherche für Lücken
+                elif verdict.verdict == "research" and verdict.needs_research():
+                    # Nachrecherche für Lücken (content_gap, hallucination, etc.)
                     if revision_round < max_revisions:
                         yield AgentEvent(
                             event_type=EventType.STATUS,
@@ -608,10 +613,22 @@ OUTPUT: NUR JSON, kein anderer Text!
                 }
             )
             
+            # Berechne Claim-Statistiken
+            a_count = sum(1 for c in claims if c.evidence_class == EvidenceClass.A)
+            b_count = sum(1 for c in claims if c.evidence_class == EvidenceClass.B)
+            c_count = sum(1 for c in claims if c.evidence_class == EvidenceClass.C)
+            
             yield AgentEvent(
                 event_type=EventType.STATUS,
                 agent_name="ClaimMiner",
-                content=f"✅ {len(claims)} Claims in {len(sections)} Sektionen extrahiert"
+                content=f"✅ {len(claims)} Claims in {len(sections)} Sektionen extrahiert",
+                data={
+                    "claims_count": len(claims),
+                    "a_claims": a_count,
+                    "b_claims": b_count,
+                    "c_claims": c_count,
+                    "sections_count": len(sections)
+                }
             )
             
             return ClaimRegister(
@@ -749,6 +766,19 @@ OUTPUT: NUR JSON, kein anderer Text!
                 "tools_used": tools_used
             }
         )
+        
+        # Abschluss-Event mit Statistiken
+        yield AgentEvent(
+            event_type=EventType.STATUS,
+            agent_name="Retriever",
+            content=f"✅ Recherche abgeschlossen: {total_sources} Quellen für {fulfilled}/{len(claims_needing_evidence)} Claims",
+            data={
+                "total_sources": total_sources,
+                "claims_processed": len(claims_needing_evidence),
+                "claims_fulfilled": fulfilled,
+                "tools_used": tools_used
+            }
+        )
     
     def _phase_5_rating(self) -> Generator[AgentEvent, None, None]:
         """Phase 5: Quellen bewerten."""
@@ -788,7 +818,10 @@ OUTPUT: NUR JSON, kein anderer Text!
         yield AgentEvent(
             event_type=EventType.STATUS,
             agent_name="Rater",
-            content=f"✅ {rated_count} Quellen bewertet"
+            content=f"✅ {rated_count} Quellen bewertet",
+            data={
+                "sources_rated": rated_count
+            }
         )
     
     def _build_source_index(self):
@@ -989,7 +1022,12 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
             yield AgentEvent(
                 event_type=EventType.STATUS,
                 agent_name="Writer",
-                content=f"✅ Artikel: {word_count} Wörter, {len(article)} Zeichen"
+                content=f"✅ Artikel: {word_count} Wörter, {len(article)} Zeichen",
+                data={
+                    "word_count": word_count,
+                    "char_count": len(article),
+                    "model_used": model_name
+                }
             )
             
             return article
@@ -1141,6 +1179,51 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
         
         return cleaned.strip()
     
+    def _format_claims_for_editor(self) -> str:
+        """Formatiert das ClaimRegister für den Editor-Prompt."""
+        if not self.claim_register or not self.claim_register.claims:
+            return "(Keine Claims verfügbar)"
+        
+        lines = []
+        for claim in self.claim_register.claims[:20]:  # Max 20 Claims
+            evidence_class = claim.evidence_class.value  # "A", "B" oder "C"
+            lines.append(f"- [{evidence_class}] {claim.claim_text}")
+        
+        if len(self.claim_register.claims) > 20:
+            lines.append(f"... und {len(self.claim_register.claims) - 20} weitere Claims")
+        
+        return "\n".join(lines)
+    
+    def _format_sources_for_editor(self) -> str:
+        """Formatiert die verfügbaren Quellen für den Editor-Prompt."""
+        if not self.source_index:
+            return "(Keine Quellen verfügbar)"
+        
+        # Sammle Source-Details
+        url_to_source = {}
+        for pack in self.evidence_packs.values():
+            for source in pack.sources:
+                if source.url not in url_to_source:
+                    url_to_source[source.url] = source
+        
+        lines = []
+        sorted_sources = sorted(self.source_index.items(), key=lambda x: x[1])[:25]  # Max 25
+        
+        for url, idx in sorted_sources:
+            source = url_to_source.get(url)
+            if source:
+                # Kürze Extract auf 100 Zeichen
+                extract = source.extract[:100] + "..." if len(source.extract) > 100 else source.extract
+                lines.append(f"[{idx}] {source.publisher}: {source.title}")
+                lines.append(f"    → {extract}")
+            else:
+                lines.append(f"[{idx}] {url}")
+        
+        if len(self.source_index) > 25:
+            lines.append(f"... und {len(self.source_index) - 25} weitere Quellen")
+        
+        return "\n".join(lines)
+    
     def _save_article(self, question: str) -> str:
         """Speichert Artikel."""
         os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -1186,6 +1269,12 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
         has_exec_summary = "Executive Summary" in self.article or "Management Summary" in self.article
         has_limitations = "Limitation" in self.article
         
+        # === NEU: ClaimRegister für Editor aufbereiten ===
+        claims_summary = self._format_claims_for_editor()
+        
+        # === NEU: Quellen-Snippets für Editor aufbereiten ===
+        sources_summary = self._format_sources_for_editor()
+        
         prompt = f"""Du bist ein kritischer Editor für wissenschaftliche Fachartikel.
 
 # ARTIKEL ZU PRÜFEN
@@ -1196,6 +1285,12 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
 - Quellenverweise im Text: {source_refs}
 - Executive Summary vorhanden: {has_exec_summary}
 - Limitations-Abschnitt vorhanden: {has_limitations}
+
+# CLAIMS DIE BELEGT SEIN MÜSSEN
+{claims_summary}
+
+# VERFÜGBARE QUELLEN
+{sources_summary}
 
 # PRÜFKRITERIEN
 
@@ -1219,6 +1314,12 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
 - Sind die Informationen konsistent?
 - Gibt es Lücken oder fehlende wichtige Aspekte?
 
+## 5. HALLUZINATIONS-CHECK (KRITISCH!)
+- Prüfe: Welche Faktenbehauptungen im Artikel haben KEINE Quellenreferenz [X]?
+- Vergleiche Aussagen im Artikel mit den verfügbaren Quellen oben
+- Wenn der Artikel Fakten behauptet die NICHT durch eine der Quellen gedeckt sind → type="hallucination"
+- Besonders kritisch: Zahlen, Statistiken, Zitate ohne [X]-Referenz
+
 # OUTPUT-FORMAT (JSON!)
 
 Antworte NUR mit diesem JSON (keine weitere Erklärung):
@@ -1230,10 +1331,11 @@ Antworte NUR mit diesem JSON (keine weitere Erklärung):
   "summary": "Kurze Zusammenfassung der Bewertung",
   "issues": [
     {{
-      "type": "length|sources|structure|content_gap",
+      "type": "length|sources|structure|content_gap|hallucination",
       "description": "Was ist das Problem?",
       "severity": "critical|major|minor",
-      "suggested_action": "revise|research",
+      "location": "Abschnitt/Satz wo das Problem ist (bei hallucination)",
+      "suggested_action": "revise|research|remove",
       "research_query": "Falls research nötig: Suchquery"
     }}
   ]
@@ -1241,9 +1343,10 @@ Antworte NUR mit diesem JSON (keine weitere Erklärung):
 ```
 
 WICHTIG: 
-- "approved" NUR wenn Artikel > 2500 Wörter UND gute Quellenreferenzierung UND vollständige Struktur
+- "approved" NUR wenn Artikel > 2500 Wörter UND gute Quellenreferenzierung UND vollständige Struktur UND keine Halluzinationen
 - "revise" bei Strukturproblemen, zu kurz, oder stilistischen Issues
-- "research" NUR wenn konkrete Fakten/Daten fehlen die recherchiert werden müssen
+- "research" wenn konkrete Fakten/Daten fehlen ODER Halluzinationen durch Recherche belegt werden müssen
+- Bei "hallucination": suggested_action kann "remove" (Passage entfernen) oder "research" (Quelle suchen) sein
 
 DEIN VERDICT:"""
 
@@ -1311,7 +1414,10 @@ DEIN VERDICT:"""
             yield AgentEvent(
                 event_type=EventType.STATUS,
                 agent_name="Editor",
-                content=f"📋 Verdict: {verdict.verdict.upper()} ({len(verdict.issues)} Issues)"
+                content=f"📋 Verdict: {verdict.verdict.upper()} ({len(verdict.issues)} Issues)",
+                data={
+                    "verdict": verdict.to_dict()
+                }
             )
             
             return verdict
@@ -1347,8 +1453,14 @@ DEIN VERDICT:"""
         )
         
         new_sources = 0
+        tools_used = set()
+        queries_executed = []
+        errors = []
+        
         for query in research_queries[:5]:  # Max 5 Nachrecherchen
+            query_result = {"query": query[:80], "sources_found": 0, "tool": "tavily"}
             try:
+                tools_used.add("tavily")
                 result = self.mcp.call_tool("tavily_search", {"query": query, "max_results": 3})
                 
                 if result and result.get("results"):
@@ -1377,18 +1489,26 @@ DEIN VERDICT:"""
                                 )
                             self.evidence_packs["GAP"].sources.append(source)
                             new_sources += 1
+                            query_result["sources_found"] += 1
                             
             except Exception as e:
-                pass
+                errors.append(f"{query[:30]}...: {str(e)[:50]}")
+            
+            queries_executed.append(query_result)
         
         # === LOGGING: End Gap Research Step ===
         self.logger.end_step(
             step_idx,
-            status="success",
+            status="success" if not errors else "partial",
             result_length=new_sources,
+            tool_calls=list(tools_used),
             details={
-                "queries_processed": len(research_queries),
-                "new_sources_found": new_sources
+                "queries_count": len(research_queries),
+                "queries_executed": min(len(research_queries), 5),
+                "new_sources_found": new_sources,
+                "queries": [q["query"] for q in queries_executed],
+                "sources_per_query": [q["sources_found"] for q in queries_executed],
+                "errors": len(errors) if errors else None
             }
         )
         
@@ -1454,6 +1574,8 @@ Behebe EXAKT die oben genannten Probleme. Nicht mehr, nicht weniger.
 - "content_gap": Vertiefe GENAU die genannten Themen mit den neuen Quellen
 - "consistency": Korrigiere PRÄZISE die genannten Widersprüche
 - "length": Erweitere die KONKRET kritisierten dünnen Passagen
+- "hallucination" mit action "remove": ENTFERNE die unbelegte Behauptung komplett aus dem Text
+- "hallucination" mit action "research": Ergänze Quellenreferenz [X] wenn neue Quelle geliefert wurde
 
 ## Qualitätsprinzipien
 1. CHIRURGISCHE PRÄZISION: Ändere nur, was kritisiert wurde
