@@ -309,7 +309,7 @@ Antworte NUR mit dem JSON-Objekt!"""
                     "target_pages": fmt["target_pages"],
                     "audience": aud["label"],
                     "tone": aud["tone"],
-                    "format": fmt["label"]
+                    "format": format_choice  # Value ("report") statt Label ("Expertenbericht")
                 },
                 "explanation": f"Optimiert für {fmt['label']} ({fmt['pages']} Seiten) für {aud['label']}"
             }

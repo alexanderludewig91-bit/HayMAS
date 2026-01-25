@@ -109,6 +109,12 @@ class GenerateRequest(BaseModel):
     # "deep" = Deep Thinking (LLM-Wissen zuerst) - DEPRECATED
     # "evidence" = Evidence-Gated (Claim-basiert) - EMPFOHLEN!
     mode: Optional[str] = "evidence"
+    # NEU: Format/Länge des Artikels
+    # "overview" = Kompakte Übersicht (3-5 Seiten)
+    # "article" = Standard-Artikel (6-10 Seiten)
+    # "report" = Umfassender Report (10-15 Seiten) - DEFAULT
+    # "deep_dive" = Deep-Dive Analyse (15-20 Seiten)
+    format: Optional[str] = "report"
 
 
 # ============================================================================
@@ -800,8 +806,9 @@ def generate_article(request: GenerateRequest):
                 from evidence_gated.orchestrator import EvidenceGatedOrchestrator
                 
                 eg_orchestrator = EvidenceGatedOrchestrator(tiers=tiers)
+                article_format = request.format or "report"
                 
-                for event in eg_orchestrator.process(request.question):
+                for event in eg_orchestrator.process(request.question, format=article_format):
                     event_data = {
                         "type": event.event_type.value,
                         "agent": event.agent_name,

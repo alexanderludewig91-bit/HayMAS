@@ -42,14 +42,14 @@ export function Studio() {
   };
 
   // Callback wenn Refiner bestätigt wird
-  const handleRefinerConfirm = (optimizedPrompt: string, _parameters: { target_pages: number; audience: string; tone: string; format: string }) => {
+  const handleRefinerConfirm = (optimizedPrompt: string, parameters: { target_pages: number; audience: string; tone: string; format: string }) => {
     setRefinerOpen(false);
     // Optimierten Prompt übernehmen
     setQuestion(optimizedPrompt);
     
-    // Direkt starten (Evidence-Gated Workflow)
+    // Direkt starten mit gewähltem Format (Evidence-Gated Workflow)
     setTimeout(() => {
-      startGenerationWithoutPlan();
+      startGenerationWithoutPlan(parameters.format);
     }, 50);
   };
 

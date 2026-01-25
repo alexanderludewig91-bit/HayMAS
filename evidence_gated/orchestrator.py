@@ -35,8 +35,55 @@ class EvidenceGatedOrchestrator:
     """
     
     MAX_GAP_LOOPS = 2
-    MIN_CLAIMS = 15
-    MIN_C_CLAIMS = 5
+    
+    # Format-Spezifikationen für unterschiedliche Artikellängen
+    # Enthält jetzt auch min_claims und min_c_claims pro Format
+    FORMAT_SPECS = {
+        "overview": {
+            "target_pages": 4,
+            "words_min": 1200,
+            "words_max": 1800,
+            "exec_summary": 150,
+            "chapter_min": 200,
+            "min_claims": 10,
+            "min_c_claims": 3,
+            "min_sections": 4,
+            "label": "Kompakte Übersicht"
+        },
+        "article": {
+            "target_pages": 8,
+            "words_min": 2000,
+            "words_max": 3000,
+            "exec_summary": 250,
+            "chapter_min": 350,
+            "min_claims": 15,
+            "min_c_claims": 5,
+            "min_sections": 6,
+            "label": "Standard-Artikel"
+        },
+        "report": {
+            "target_pages": 12,
+            "words_min": 3000,
+            "words_max": 4500,
+            "exec_summary": 350,
+            "chapter_min": 500,
+            "min_claims": 20,
+            "min_c_claims": 7,
+            "min_sections": 8,
+            "label": "Umfassender Report"
+        },
+        "deep_dive": {
+            "target_pages": 18,
+            "words_min": 5000,
+            "words_max": 7000,
+            "exec_summary": 450,
+            "chapter_min": 600,
+            "min_claims": 30,
+            "min_c_claims": 10,
+            "min_sections": 10,
+            "label": "Deep-Dive Analyse"
+        }
+    }
     
     def __init__(self, tiers: Dict[str, str] = None):
         self.tiers = tiers or {}
@@ -48,6 +95,7 @@ class EvidenceGatedOrchestrator:
         self.evidence_packs: Dict[str, EvidencePack] = {}
         self.article: str = ""
         self.source_index: Dict[str, int] = {}  # URL -> Nummer für konsistente Referenzierung
+        self.format: str = "report"  # Default-Format
     
     def _get_model(self, agent_type: str) -> tuple[str, str]:
         """
@@ -152,17 +200,28 @@ class EvidenceGatedOrchestrator:
 
     def process(
         self,
-        question: str
+        question: str,
+        format: str = "report"
     ) -> Generator[AgentEvent, None, Dict[str, Any]]:
         """
         Führt den kompletten Evidence-Gated Workflow durch.
+        
+        Args:
+            question: Die Kernfrage
+            format: Artikelformat - "overview", "article", "report", "deep_dive"
         """
+        # Format speichern (mit Fallback auf report)
+        self.format = format if format in self.FORMAT_SPECS else "report"
+        format_spec = self.FORMAT_SPECS[self.format]
+        
         # Logger initialisieren
         self.logger = SessionLogger(
             question=question,
             settings={
                 "mode": "evidence_gated",
                 "tiers": self.tiers,
+                "format": self.format,
+                "target_pages": format_spec["target_pages"],
                 "use_editor": True,  # EditorialReviewer ist immer aktiv
                 "research_rounds": "dynamisch"  # Claim-basierte Recherche statt fixer Runden
             }
@@ -403,21 +462,39 @@ class EvidenceGatedOrchestrator:
         model_name, provider = self._get_model("claim_miner")
         tier = self.tiers.get("orchestrator", "premium")
         
+        # Format-spezifische Parameter aus FORMAT_SPECS
+        format_spec = self.FORMAT_SPECS[self.format]
+        target_pages = format_spec["target_pages"]
+        min_claims = format_spec["min_claims"]
+        min_c_claims = format_spec["min_c_claims"]
+        min_sections = format_spec["min_sections"]
+        
+        # Page-Range für Prompt
+        page_ranges = {
+            "overview": "3-5",
+            "article": "6-10",
+            "report": "10-15",
+            "deep_dive": "15-20"
+        }
+        page_range = page_ranges.get(self.format, "10-15")
+        
         yield AgentEvent(
             event_type=EventType.STATUS,
             agent_name="ClaimMiner",
-            content=f"⛏️ Mining Claims mit {model_name}..."
+            content=f"⛏️ Mining Claims mit {model_name} (Format: {format_spec['label']})..."
         )
         
         prompt = f"""Du bist ein Claim Mining Agent für wissenschaftliche Artikel.
 
 FRAGE: {question}
 
+ZIEL-FORMAT: {format_spec['label']} ({page_range} Seiten)
+
 AUFGABE: Erstelle ein ClaimRegister mit:
 1. QuestionBrief (präzisierte Frage)
 2. TermMap (Synonyme, Suchvarianten, Negative Keywords)
-3. Outline (Gliederung für 12-15 Seiten)
-4. Claims (MINDESTENS 20 Claims, davon MINDESTENS 7 C-Claims!)
+3. Outline (Gliederung für {page_range} Seiten)
+4. Claims (MINDESTENS {min_claims} Claims, davon MINDESTENS {min_c_claims} C-Claims!)
 
 CLAIM-TYPEN:
 - definition: "X ist ..."
@@ -436,7 +513,7 @@ EVIDENZKLASSEN:
 WICHTIGE STRUKTUR-ANFORDERUNGEN:
 - Sektion 1 MUSS "Executive Summary / Management Summary" sein (2-3 Claims)
 - Jede weitere Sektion sollte 2-4 Claims haben
-- MINDESTENS 8 Sektionen für einen 12-15 Seiten Artikel
+- MINDESTENS {min_sections} Sektionen für einen {page_range} Seiten Artikel
 - Jeder B/C-Claim braucht ein retrieval_ticket mit 2-3 Queries!
 
 OUTPUT: NUR JSON, kein anderer Text!
@@ -447,7 +524,7 @@ OUTPUT: NUR JSON, kein anderer Text!
     "core_question": "...",
     "audience": "Fachexperten",
     "tone": "wissenschaftlich",
-    "target_pages": 12,
+    "target_pages": {target_pages},
     "as_of_date": "{date.today().isoformat()}",
     "freshness_priority": "high",
     "scope_in": ["..."],
@@ -631,13 +708,16 @@ OUTPUT: NUR JSON, kein anderer Text!
                 }
             )
             
+            # Format-spezifische Claim-Anforderungen
+            format_spec = self.FORMAT_SPECS[self.format]
+            
             return ClaimRegister(
                 question_brief=question_brief,
                 term_map=term_map,
                 outline=outline,
                 claims=claims,
-                min_total_claims=self.MIN_CLAIMS,
-                min_c_claims=self.MIN_C_CLAIMS
+                min_total_claims=format_spec["min_claims"],
+                min_c_claims=format_spec["min_c_claims"]
             )
             
         except Exception as e:
@@ -914,10 +994,22 @@ OUTPUT: NUR JSON, kein anderer Text!
             outline_text += f"   Claims: {', '.join(s.expected_claim_ids)}\n"
             outline_text += f"   Umfang: ca. {s.estimated_pages} Seiten\n"
         
+        # Format-spezifische Längenvorgaben
+        format_spec = self.FORMAT_SPECS[self.format]
+        words_min = format_spec["words_min"]
+        words_max = format_spec["words_max"]
+        target_pages = format_spec["target_pages"]
+        exec_summary_words = format_spec["exec_summary"]
+        chapter_min_words = format_spec["chapter_min"]
+        format_label = format_spec["label"]
+        
         prompt = f"""Du bist ein wissenschaftlicher Autor und schreibst einen Expertenartikel.
 
 # KERNFRAGE
 {self.claim_register.question_brief.core_question}
+
+# ZIEL-FORMAT: {format_label}
+- Ziel: {words_min}-{words_max} Wörter ({target_pages} Seiten)
 
 # ARTIKEL-STRUKTUR (UNBEDINGT EINHALTEN!)
 {outline_text}
@@ -934,9 +1026,9 @@ OUTPUT: NUR JSON, kein anderer Text!
 - KEINE Claim-Anchors im Text! Die (C-01) etc. sind nur für dich zur Orientierung.
 
 ## 2. Artikellänge (KRITISCH!)
-- MINDESTENS 3000 Wörter (ca. 12-15 Seiten)
-- Executive Summary: 300-400 Wörter
-- Jedes Hauptkapitel: MINDESTENS 400-600 Wörter
+- Ziel: {words_min}-{words_max} Wörter ({target_pages} Seiten)
+- Executive Summary: ca. {exec_summary_words} Wörter
+- Jedes Hauptkapitel: MINDESTENS {chapter_min_words} Wörter
 - Ausführliche Erklärungen, Beispiele, Kontext!
 
 ## 3. Struktur
@@ -958,7 +1050,7 @@ OUTPUT: NUR JSON, kein anderer Text!
 - Kein "laut Quelle X" - nutze [X] Notation
 - Keine Aufzählungen als Hauptinhalt - ausführliche Fließtexte!
 
-SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
+SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
 
         # === LOGGING: Start Writer Step ===
         step_idx = self.logger.start_step(
@@ -1275,10 +1367,21 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
         # === NEU: Quellen-Snippets für Editor aufbereiten ===
         sources_summary = self._format_sources_for_editor()
         
+        # Format-spezifische Prüfkriterien
+        format_spec = self.FORMAT_SPECS[self.format]
+        words_min = format_spec["words_min"]
+        words_max = format_spec["words_max"]
+        format_label = format_spec["label"]
+        
+        # Dynamische Mindestlänge für Editor (80% des Minimums)
+        editor_min_words = int(words_min * 0.8)
+        
         prompt = f"""Du bist ein kritischer Editor für wissenschaftliche Fachartikel.
 
 # ARTIKEL ZU PRÜFEN
 {self.article[:15000]}  # Erste 15000 Zeichen
+
+# ZIEL-FORMAT: {format_label} ({words_min}-{words_max} Wörter)
 
 # ARTIKEL-STATISTIKEN
 - Wörter: {word_count}
@@ -1295,9 +1398,9 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
 # PRÜFKRITERIEN
 
 ## 1. Länge (KRITISCH!)
-- MINDESTENS 2500 Wörter für einen vollständigen Artikel
+- ZIEL: {words_min}-{words_max} Wörter ({format_label})
 - Aktuell: {word_count} Wörter
-- Bei < 2500: verdict = "revise"
+- Bei < {editor_min_words}: verdict = "revise"
 
 ## 2. Quellenreferenzierung
 - Sind Quellen [1], [2], etc. im Text referenziert?
@@ -1343,10 +1446,16 @@ Antworte NUR mit diesem JSON (keine weitere Erklärung):
 ```
 
 WICHTIG: 
-- "approved" NUR wenn Artikel > 2500 Wörter UND gute Quellenreferenzierung UND vollständige Struktur UND keine Halluzinationen
+- "approved" NUR wenn Artikel im Zielbereich UND gute Quellenreferenzierung UND vollständige Struktur UND keine Halluzinationen
 - "revise" bei Strukturproblemen, zu kurz, oder stilistischen Issues
-- "research" wenn konkrete Fakten/Daten fehlen ODER Halluzinationen durch Recherche belegt werden müssen
-- Bei "hallucination": suggested_action kann "remove" (Passage entfernen) oder "research" (Quelle suchen) sein
+- "research" NUR wenn GENERELLE Informationen fehlen (z.B. "Was ist X?" ohne Erklärung)
+
+HALLUZINATIONS-BEHANDLUNG (KRITISCH!):
+- Bei SPEZIFISCHEN ZAHLEN ohne Beleg (z.B. "72 Punkte", "unter 20 FPS", "150 Mitarbeiter") → suggested_action = "remove"
+- Bei KONKRETEN STATISTIKEN ohne Quelle → suggested_action = "remove"  
+- Bei ZITATEN ohne Beleg → suggested_action = "remove"
+- NUR bei ALLGEMEINEN Aussagen die ergänzbar sind → suggested_action = "research"
+- STANDARD für hallucination sollte "remove" sein, nicht "research"!
 
 DEIN VERDICT:"""
 
@@ -1574,8 +1683,15 @@ Behebe EXAKT die oben genannten Probleme. Nicht mehr, nicht weniger.
 - "content_gap": Vertiefe GENAU die genannten Themen mit den neuen Quellen
 - "consistency": Korrigiere PRÄZISE die genannten Widersprüche
 - "length": Erweitere die KONKRET kritisierten dünnen Passagen
-- "hallucination" mit action "remove": ENTFERNE die unbelegte Behauptung komplett aus dem Text
-- "hallucination" mit action "research": Ergänze Quellenreferenz [X] wenn neue Quelle geliefert wurde
+
+## HALLUZINATIONS-BEHANDLUNG (KRITISCH!)
+- Bei action "remove": LÖSCHE den gesamten Satz/Passage mit der unbelegten Behauptung!
+  - Ersetze NICHT durch ähnliche Behauptung
+  - Erfinde KEINE alternativen Zahlen
+  - Lass die Stelle einfach weg oder formuliere allgemeiner ohne konkrete Zahlen
+  - Beispiel: "Frameraten von unter 20 FPS" → komplett streichen oder "Performance-Probleme wurden berichtet"
+- Bei action "research": Ergänze Quellenreferenz [X] NUR wenn die neue Quelle EXAKT diese Behauptung belegt
+  - Wenn neue Quelle andere Zahlen nennt → passe die Zahl im Artikel an die Quelle an!
 
 ## Qualitätsprinzipien
 1. CHIRURGISCHE PRÄZISION: Ändere nur, was kritisiert wurde

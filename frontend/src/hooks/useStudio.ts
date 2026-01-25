@@ -21,16 +21,18 @@ interface StudioStore {
 
   // Settings
   tiers: AgentTiers;
+  format: string;
 
   // Actions
   setQuestion: (q: string) => void;
+  setFormat: (format: string) => void;
   analyzeAndPlan: () => Promise<void>;
   updatePlan: (plan: ResearchPlan) => void;
   updateRound: (index: number, round: Partial<ResearchRound>) => void;
   toggleRound: (index: number) => void;
   setUseEditor: (use: boolean) => void;
   startGeneration: () => void;
-  startGenerationWithoutPlan: () => void;
+  startGenerationWithoutPlan: (format?: string) => void;
   cancelGeneration: () => void;
   viewArticle: () => void;
   reset: () => void;
@@ -61,6 +63,8 @@ export function useStudio(): StudioStore {
     writer: 'premium',
     editor: 'premium',
   });
+
+  const [format, setFormat] = useState<string>('report');
 
   const cancelRef = useRef<(() => void) | null>(null);
 
@@ -185,8 +189,14 @@ export function useStudio(): StudioStore {
   }, [question, tiers, plan, events]);
 
   // Generierung ohne Plan starten (Auto-Modus)
-  const startGenerationWithoutPlan = useCallback(() => {
+  const startGenerationWithoutPlan = useCallback((overrideFormat?: string) => {
     if (!question.trim()) return;
+
+    // Format setzen wenn übergeben
+    const articleFormat = overrideFormat || format;
+    if (overrideFormat) {
+      setFormat(overrideFormat);
+    }
 
     setState('producing');
     setEvents([]);
@@ -228,11 +238,12 @@ export function useStudio(): StudioStore {
       (err) => {
         setError(err);
         setState('idle');
-      }
+      },
+      articleFormat  // Format an API übergeben
     );
 
     cancelRef.current = cancel;
-  }, [question, tiers, events]);
+  }, [question, tiers, format, events]);
 
   const cancelGeneration = useCallback(() => {
     cancelRef.current?.();
@@ -282,7 +293,9 @@ export function useStudio(): StudioStore {
     archiveOpen,
     settingsOpen,
     tiers,
+    format,
     setQuestion,
+    setFormat,
     analyzeAndPlan,
     updatePlan,
     updateRound,

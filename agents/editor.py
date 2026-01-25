@@ -58,11 +58,14 @@ class EditorVerdict:
     
     @classmethod
     def from_response(cls, response_text: str) -> "EditorVerdict":
-        json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+        # Versuche JSON aus ```json ... ``` Block zu extrahieren
+        # WICHTIG: Greedy match für nested JSON!
+        json_match = re.search(r'```json\s*(\{[\s\S]*\})\s*```', response_text)
         
         if json_match:
+            json_str = json_match.group(1)
             try:
-                data = json.loads(json_match.group(1))
+                data = json.loads(json_str)
                 issues = []
                 for issue_data in data.get("issues", []):
                     issues.append(EditorIssue(
@@ -79,20 +82,62 @@ class EditorVerdict:
                     summary=data.get("summary", ""),
                     raw_feedback=response_text
                 )
+            except (json.JSONDecodeError, ValueError, KeyError) as e:
+                print(f"[EditorVerdict] JSON-Parse-Fehler: {e}")
+                print(f"[EditorVerdict] JSON-String: {json_str[:500]}...")
+        
+        # Fallback 2: Versuche erstes { ... } im Text zu finden
+        brace_match = re.search(r'\{[\s\S]*"verdict"[\s\S]*\}', response_text)
+        if brace_match:
+            try:
+                # Finde das korrekt geschlossene JSON-Objekt
+                json_str = brace_match.group(0)
+                # Balanciere Klammern
+                depth = 0
+                end_idx = 0
+                for i, char in enumerate(json_str):
+                    if char == '{':
+                        depth += 1
+                    elif char == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_idx = i + 1
+                            break
+                if end_idx > 0:
+                    json_str = json_str[:end_idx]
+                    data = json.loads(json_str)
+                    issues = []
+                    for issue_data in data.get("issues", []):
+                        issues.append(EditorIssue(
+                            type=issue_data.get("type", "style"),
+                            description=issue_data.get("description", ""),
+                            severity=issue_data.get("severity", "minor"),
+                            suggested_action=issue_data.get("suggested_action", "revise"),
+                            research_query=issue_data.get("research_query")
+                        ))
+                    return cls(
+                        verdict=data.get("verdict", "revise"),
+                        confidence=float(data.get("confidence", 0.5)),
+                        issues=issues,
+                        summary=data.get("summary", ""),
+                        raw_feedback=response_text
+                    )
             except (json.JSONDecodeError, ValueError, KeyError):
                 pass
         
+        # Fallback 3: Keyword-basierte Erkennung (ohne Issues)
         verdict = "revise"
         response_lower = response_text.lower()
-        if "gesamtbewertung: gut" in response_lower:
+        if "gesamtbewertung: gut" in response_lower or '"verdict": "approved"' in response_lower:
             verdict = "approved"
         elif "mangelhaft" in response_lower:
             verdict = "research"
         elif any(kw in response_lower for kw in ["quelle fehlt", "beleg fehlt"]):
             verdict = "research"
         
+        print(f"[EditorVerdict] WARNUNG: Fallback verwendet, keine Issues extrahiert!")
         return cls(verdict=verdict, confidence=0.4, issues=[], 
-                   summary="Fallback", raw_feedback=response_text)
+                   summary="Fallback - JSON konnte nicht geparst werden", raw_feedback=response_text)
     
     def has_content_gaps(self) -> bool:
         """Prüft ob Issues vom Typ content_gap vorhanden sind."""
