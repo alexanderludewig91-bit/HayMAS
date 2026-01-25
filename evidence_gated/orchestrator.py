@@ -339,10 +339,13 @@ class EvidenceGatedOrchestrator:
             yield AgentEvent(
                 event_type=EventType.STATUS,
                 agent_name="Orchestrator",
-                content="📚 Phase 8/8: Bibliography..."
+                content="📚 Phase 8/8: Bibliography & Polish..."
             )
             
             self.article = self._add_bibliography()
+            
+            # ===== POST-PROCESSING: Prozess-Artefakte entfernen =====
+            self.article = self._polish_article(self.article)
             
             # ===== SPEICHERN =====
             article_path = self._save_article(question)
@@ -1001,7 +1004,11 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
             raise
     
     def _add_bibliography(self) -> str:
-        """Fügt Literaturverzeichnis mit konsistenter Nummerierung hinzu."""
+        """Fügt Literaturverzeichnis mit konsistenter Nummerierung hinzu.
+        
+        Nur Quellen die tatsächlich im Artikel referenziert werden ([1], [2], etc.)
+        werden ins Verzeichnis aufgenommen.
+        """
         
         # === LOGGING: Start Bibliography Step ===
         step_idx = self.logger.start_step(
@@ -1017,6 +1024,9 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
             self.logger.end_step(step_idx, status="success", result_length=0)
             return self.article
         
+        # Finde alle im Artikel verwendeten Quellennummern [1], [2], etc.
+        used_refs = set(int(m) for m in re.findall(r'\[(\d+)\]', self.article))
+        
         # Sortiere nach Index
         sorted_sources = sorted(self.source_index.items(), key=lambda x: x[1])
         
@@ -1028,21 +1038,28 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
                     url_to_source[source.url] = source
         
         bib = "\n\n---\n\n## Literaturverzeichnis\n\n"
+        included_count = 0
         for url, idx in sorted_sources:
+            # Nur Quellen aufnehmen die im Text referenziert werden
+            if idx not in used_refs:
+                continue
+            
             source = url_to_source.get(url)
             if source:
                 bib += f"[{idx}] {source.publisher}: {source.title}. {url}\n\n"
             else:
                 bib += f"[{idx}] {url}\n\n"
+            included_count += 1
         
         # === LOGGING: End Bibliography Step ===
         self.logger.end_step(
             step_idx,
             status="success",
-            result_length=len(sorted_sources),
+            result_length=included_count,
             details={
                 "unique_sources": len(sorted_sources),
-                "total_in_index": len(self.source_index)
+                "sources_in_article": included_count,
+                "filtered_out": len(sorted_sources) - included_count
             }
         )
         
@@ -1069,6 +1086,60 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL (mindestens 3000 Wörter):"""
             return domain.split(".")[0].title()
         except:
             return "Unbekannt"
+    
+    def _polish_article(self, article: str) -> str:
+        """
+        Post-Processing: Entfernt Prozess-Artefakte aus dem finalen Artikel.
+        
+        Entfernt:
+        - Meta-Kommentare über Überarbeitungen
+        - Hinweise auf "ursprüngliche Fassung"
+        - Klammerzusätze wie "(Abschnitt vervollständigt)"
+        - Editor/Writer Prozessinformationen
+        """
+        if not article:
+            return article
+        
+        # Patterns für Prozess-Artefakte
+        patterns_to_remove = [
+            # Überschriften-Zusätze in Klammern
+            r'\s*\(Abschnitt\s+(?:vervollständigt|ergänzt|überarbeitet|neu)\)',
+            r'\s*\((?:neu|ergänzt|überarbeitet|erweitert)(?:;[^)]+)?\)',
+            r'\s*\(zuvor\s+(?:fehlend|unvollständig|abstrakt)\)',
+            r'\s*\(praxisorientiert\s+ergänzt[^)]*\)',
+            r'\s*\(Hamburg[‑-]Bezug\s+geschärft\)',
+            
+            # Meta-Sätze über Überarbeitungen (am Satzanfang)
+            r'(?:^|\n)Die\s+ursprüngliche\s+(?:Fassung|Version)\s+[^.]+\.\s*',
+            r'(?:^|\n)Der\s+ursprüngliche\s+Text\s+[^.]+\.\s*',
+            r'(?:^|\n)In\s+der\s+(?:ursprünglichen|vorherigen)\s+(?:Fassung|Version)\s+[^.]+\.\s*',
+            r'(?:^|\n)Dieser\s+Abschnitt\s+wurde\s+(?:überarbeitet|ergänzt|erweitert)[^.]*\.\s*',
+            r'(?:^|\n)Die\s+vorliegende\s+Überarbeitung\s+[^.]+\.\s*',
+            
+            # Fettgedruckte Meta-Hinweise
+            r'\*\*Ergänzend[^*]+\*\*',
+            r'\*\*(?:Zur\s+)?(?:Behebung|Schließung)\s+der\s+(?:zuvor\s+)?kritisierten\s+(?:Lücke|Lücken)[^*]*\*\*',
+            r'\*\*(?:Neu|Ergänzt|Korrigiert)[^*]*\*\*:?\s*',
+            
+            # Hinweise in Klammern im Fließtext
+            r'\s*\((?:siehe|vgl\.?)\s+(?:ursprüngliche|vorherige)\s+(?:Fassung|Version)\)',
+            r'\s*\((?:diese|jene)\s+Lücke\s+wurde\s+(?:geschlossen|behoben)\)',
+        ]
+        
+        cleaned = article
+        for pattern in patterns_to_remove:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.MULTILINE)
+        
+        # Aufräumen: Mehrfache Leerzeilen reduzieren
+        cleaned = re.sub(r'\n{4,}', '\n\n\n', cleaned)
+        
+        # Aufräumen: Leerzeichen vor Satzzeichen
+        cleaned = re.sub(r'\s+([.,;:!?])', r'\1', cleaned)
+        
+        # Aufräumen: Mehrfache Leerzeichen
+        cleaned = re.sub(r'  +', ' ', cleaned)
+        
+        return cleaned.strip()
     
     def _save_article(self, question: str) -> str:
         """Speichert Artikel."""
@@ -1389,6 +1460,15 @@ Behebe EXAKT die oben genannten Probleme. Nicht mehr, nicht weniger.
 2. KONTEXT BEWAHREN: Bestehende gute Passagen bleiben unverändert
 3. QUELLENINTEGRITÄT: Alle [X]-Verweise müssen erhalten bleiben
 4. VOLLSTÄNDIGKEIT: Gib den GESAMTEN Artikel zurück (nicht nur Änderungen)
+
+## KRITISCH - KEINE META-KOMMENTARE!
+Der finale Artikel ist für LESER bestimmt, NICHT für Editoren. Daher:
+- KEINE Hinweise auf "ursprüngliche Fassung" oder "vorherige Version"
+- KEINE Kommentare wie "(Abschnitt vervollständigt)", "(neu)", "(ergänzt)"
+- KEINE Erklärungen wie "Dieser Abschnitt wurde überarbeitet weil..."
+- KEINE Metainformationen über den Überarbeitungsprozess
+- Der Leser darf NICHT merken, dass der Text überarbeitet wurde
+- Schreibe so, als wäre es die ERSTE und EINZIGE Version
 
 ## WICHTIG
 - Keine proaktiven "Verbesserungen" an Stellen ohne Kritik

@@ -24,6 +24,55 @@ Diese Issues müssen als nächstes behoben werden!
 
 ---
 
+## 🟠 Issues aus Log-Analyse (25.01.2026)
+
+Identifizierte Probleme bei der kritischen Durchsicht des Session-Logs.
+
+### Bereits gefixt ✅
+
+| Status | Issue | Beschreibung | Fix |
+|--------|-------|--------------|-----|
+| ✅ | **Irrelevante Quellen im Literaturverzeichnis** | Alle recherchierten Quellen wurden aufgenommen, auch nicht verwendete | `_add_bibliography` filtert jetzt nach `[X]`-Referenzen im Text |
+| ✅ | **Prozess-Artefakte im Artikel** | Meta-Kommentare wie "(Abschnitt vervollständigt)" im finalen Text | `_polish_article` entfernt Artefakte + Prompt-Fix |
+
+### Offen ⬜
+
+| Status | Issue | Beschreibung | Auswirkung |
+|--------|-------|--------------|------------|
+| ⬜ | **Tier-Modell-Inkonsistenz** | ClaimMiner nutzt `claude-opus-4-5` obwohl Tier "budget" gewählt | Falsche Kostenberechnung, teurer als erwartet |
+| ⬜ | **Claims verschwinden beim Retrieval** | 23 Claims gemined → nur 21 processed (2 fehlen) | Nicht alle Claims werden recherchiert |
+| ⬜ | **Semantic Scholar nie verwendet** | Tool wird nie ausgewählt, obwohl für wissenschaftliche Themen relevant | Fehlende akademische Quellen |
+| ⬜ | **Editorial "approved" mit offenen Issues** | verdict="approved" aber issues_count=4 – logisch inkonsistent | Unklar ob Artikel wirklich fertig |
+| ⬜ | **GapRetriever Logging unvollständig** | `tool_calls: []` leer, obwohl 13 Quellen gefunden | Debugging/Transparenz eingeschränkt |
+
+### Artikellänge-Problem (kritisch!)
+
+| Status | Issue | Beschreibung | Auswirkung |
+|--------|-------|--------------|------------|
+| ⬜ | **Format-Parameter nicht durchgereicht** | Frontend-Auswahl "Fachartikel 8-10 Seiten" kommt nicht beim Writer-Prompt an | Prompts sind hardcoded auf 12-15 Seiten |
+| ⬜ | **Nur Mindest-, keine Maximallänge** | Prompts fordern "MINDESTENS 3000 Wörter" ohne Obergrenze | Artikel werden 2x so lang wie gewählt (6500 statt 3500 Wörter) |
+| ⬜ | **Claim-Anzahl ignoriert Format** | Immer 20+ Claims, unabhängig von gewählter Länge | Zu viele Claims → zu langer Artikel |
+
+### Lösungsvorschläge Artikellänge
+
+1. **Format-Parameter durchreichen**
+   - `settings.format` bis zum ClaimBoundedWriter transportieren
+   - Prompts dynamisch nach Format anpassen
+
+2. **Format-spezifische Vorgaben**
+   | Format | Seiten | Wörter | Claims |
+   |--------|--------|--------|--------|
+   | Overview | 4-5 | 1600-2000 | 6-8 |
+   | Fachartikel | 8-10 | 3200-4000 | 12-15 |
+   | Expertenbericht | 12-15 | 4800-6000 | 18-22 |
+   | Deep-Dive | 20-25 | 8000-10000 | 25-30 |
+
+3. **Wortlimits mit Ober- UND Untergrenze**
+   - Aktuell: "MINDESTENS 3000 Wörter"
+   - Besser: "zwischen 3200 und 4000 Wörter (8-10 Seiten)"
+
+---
+
 ## 🔧 Legende
 
 - ⬜ Offen
@@ -241,7 +290,10 @@ Nicht "1 Klick → 15 Seiten", sondern iterativer Prozess:
 | 2026-01-18 | **Neues Tool:** arXiv für Preprints (ML, KI, CS, Physik) |
 | 2026-01-18 | **Neues Tool:** TED API für EU-Ausschreibungen (perfekt für Verwaltung!) |
 | 2026-01-18 | **🚀 Smart Editor-Routing:** Editor-Feedback führt zu gezielter Nachrecherche statt nur Writer-Revision |
+| 2026-01-25 | **✅ Fix:** Literaturverzeichnis filtert jetzt irrelevante Quellen (nur referenzierte aufnehmen) |
+| 2026-01-25 | **✅ Fix:** Prozess-Artefakte werden aus Artikel entfernt (`_polish_article`) |
+| 2026-01-25 | **📋 Log-Analyse:** 7 neue Issues identifiziert (Tier-Inkonsistenz, Artikellänge, Tool-Auswahl, etc.) |
 
 ---
 
-*Zuletzt aktualisiert: 18.01.2026*
+*Zuletzt aktualisiert: 25.01.2026*
