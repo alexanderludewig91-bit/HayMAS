@@ -1515,6 +1515,8 @@ DEIN VERDICT:"""
                     "verdict": verdict.verdict,
                     "confidence": verdict.confidence,
                     "issues_count": len(verdict.issues),
+                    "issues": [issue.to_dict() for issue in verdict.issues],  # Komplette Issue-Details!
+                    "summary": verdict.summary,  # Editor-Zusammenfassung
                     "word_count_checked": word_count,
                     "model_used": model_name
                 }
