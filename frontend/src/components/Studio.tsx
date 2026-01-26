@@ -29,6 +29,7 @@ export function Studio() {
     setArchiveOpen,
     setSettingsOpen,
     setTier,
+    setWriterProvider,
   } = useStudio();
 
   // Prompt Refiner Modal State
@@ -108,6 +109,7 @@ export function Studio() {
         onClose={() => setSettingsOpen(false)}
         tiers={tiers}
         onTierChange={setTier}
+        onWriterProviderChange={setWriterProvider}
       />
 
       {/* Prompt Refiner Modal */}

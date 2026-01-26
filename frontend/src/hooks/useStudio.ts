@@ -40,6 +40,7 @@ interface StudioStore {
   setArchiveOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   setTier: (agent: keyof AgentTiers, tier: 'premium' | 'budget') => void;
+  setWriterProvider: (provider: 'openai' | 'gemini') => void;
 }
 
 export function useStudio(): StudioStore {
@@ -62,6 +63,7 @@ export function useStudio(): StudioStore {
     researcher: 'premium',
     writer: 'premium',
     editor: 'premium',
+    writerProvider: 'openai',  // NEU: Default OpenAI
   });
 
   const [format, setFormat] = useState<string>('report');
@@ -84,12 +86,13 @@ export function useStudio(): StudioStore {
         // NEU: Modell-Empfehlungen übernehmen (wenn vorhanden)
         if (response.plan.model_recommendations) {
           const recs = response.plan.model_recommendations;
-          setTiers({
+          setTiers((prev) => ({
             orchestrator: recs.orchestrator || 'premium',
             researcher: recs.researcher || 'premium',
             writer: recs.writer || 'premium',
             editor: recs.editor || 'premium',
-          });
+            writerProvider: prev.writerProvider || 'openai',  // Behalte Provider-Auswahl
+          }));
         }
         
         setState('planning');
@@ -281,6 +284,10 @@ export function useStudio(): StudioStore {
     setTiers((prev) => ({ ...prev, [agent]: tier }));
   }, []);
 
+  const setWriterProvider = useCallback((provider: 'openai' | 'gemini') => {
+    setTiers((prev) => ({ ...prev, writerProvider: provider }));
+  }, []);
+
   return {
     state,
     question,
@@ -310,5 +317,6 @@ export function useStudio(): StudioStore {
     setArchiveOpen,
     setSettingsOpen,
     setTier,
+    setWriterProvider,
   };
 }

@@ -24,12 +24,14 @@ export interface ApiStatus {
 }
 
 export type Tier = 'premium' | 'budget';
+export type WriterProvider = 'openai' | 'gemini';
 
 export interface AgentTiers {
   orchestrator: Tier;
   researcher: Tier;
   writer: Tier;
   editor: Tier;
+  writerProvider?: WriterProvider;  // NEU: OpenAI oder Gemini für Writer
 }
 
 // ============================================================================

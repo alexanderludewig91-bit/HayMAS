@@ -1,6 +1,6 @@
 import { X, Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import type { AgentTiers, ApiStatus, Tier } from '../types';
+import type { AgentTiers, ApiStatus, Tier, WriterProvider } from '../types';
 import { getStatus } from '../lib/api';
 
 interface SettingsDrawerProps {
@@ -8,21 +8,31 @@ interface SettingsDrawerProps {
   onClose: () => void;
   tiers: AgentTiers;
   onTierChange: (agent: keyof AgentTiers, tier: Tier) => void;
+  onWriterProviderChange?: (provider: WriterProvider) => void;
 }
 
+// Agenten ohne Writer (der hat eigene Darstellung)
 const agents: { key: keyof AgentTiers; label: string; description: string; premium: string; budget: string }[] = [
   { key: 'orchestrator', label: 'Orchestrator', description: 'Plant Claims & Struktur', premium: 'Claude Opus 4.5', budget: 'Claude Sonnet 4.5' },
-  { key: 'writer', label: 'Writer', description: 'Schreibt den Artikel', premium: 'GPT-5.2', budget: 'GPT-5.1' },
   { key: 'editor', label: 'Editor', description: 'Qualitätsprüfung', premium: 'Claude Sonnet 4.5', budget: 'Claude Haiku 4.5' },
 ];
+
+// Writer-Modelle pro Provider
+const writerModels: Record<WriterProvider, { premium: string; budget: string }> = {
+  openai: { premium: 'GPT-5.2', budget: 'GPT-5.1' },
+  gemini: { premium: 'Gemini 3 Pro', budget: 'Gemini 2.5 Flash' },
+};
 
 export function SettingsDrawer({ 
   open, 
   onClose, 
   tiers, 
   onTierChange,
+  onWriterProviderChange,
 }: SettingsDrawerProps) {
   const [status, setStatus] = useState<ApiStatus | null>(null);
+  const writerProvider: WriterProvider = tiers.writerProvider || 'openai';
+  const writerTier = tiers.writer || 'premium';
 
   useEffect(() => {
     if (open) {
@@ -93,6 +103,68 @@ export function SettingsDrawer({
                   </div>
                 </div>
               ))}
+
+              {/* Writer - eigene Section mit Provider-Auswahl */}
+              <div className="p-3 bg-neutral-50 rounded-lg border-2 border-blue-100">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-medium text-sm text-neutral-900">Writer</span>
+                </div>
+                <p className="text-xs text-neutral-500 mb-2">Schreibt den Artikel</p>
+                
+                {/* Provider Toggle */}
+                <div className="flex gap-1 mb-2 p-1 bg-neutral-200 rounded">
+                  <button
+                    onClick={() => onWriterProviderChange?.('openai')}
+                    className={`flex-1 py-1 text-xs rounded transition-colors ${
+                      writerProvider === 'openai'
+                        ? 'bg-white text-neutral-900 shadow-sm'
+                        : 'text-neutral-500 hover:text-neutral-700'
+                    }`}
+                  >
+                    OpenAI
+                  </button>
+                  <button
+                    onClick={() => onWriterProviderChange?.('gemini')}
+                    className={`flex-1 py-1 text-xs rounded transition-colors ${
+                      writerProvider === 'gemini'
+                        ? 'bg-white text-neutral-900 shadow-sm'
+                        : 'text-neutral-500 hover:text-neutral-700'
+                    }`}
+                  >
+                    Gemini
+                  </button>
+                </div>
+
+                {/* Tier Buttons */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => onTierChange('writer', 'premium')}
+                    className={`flex-1 py-1.5 text-xs rounded transition-colors flex flex-col items-center ${
+                      writerTier === 'premium'
+                        ? 'bg-neutral-900 text-white'
+                        : 'bg-white border border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                    }`}
+                  >
+                    <span className="font-medium">Premium</span>
+                    <span className={`text-[10px] ${writerTier === 'premium' ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                      {writerModels[writerProvider].premium}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => onTierChange('writer', 'budget')}
+                    className={`flex-1 py-1.5 text-xs rounded transition-colors flex flex-col items-center ${
+                      writerTier === 'budget'
+                        ? 'bg-neutral-900 text-white'
+                        : 'bg-white border border-neutral-200 text-neutral-600 hover:bg-neutral-100'
+                    }`}
+                  >
+                    <span className="font-medium">Budget</span>
+                    <span className={`text-[10px] ${writerTier === 'budget' ? 'text-neutral-300' : 'text-neutral-400'}`}>
+                      {writerModels[writerProvider].budget}
+                    </span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
 

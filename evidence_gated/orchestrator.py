@@ -107,7 +107,25 @@ class EvidenceGatedOrchestrator:
         Returns:
             (model_name, provider)
         """
-        tier = self.tiers.get(agent_type, self.tiers.get("writer", "premium"))
+        # Mapping für Tier-Lookup (claim_miner -> orchestrator tier)
+        tier_mapping = {
+            "claim_miner": "orchestrator",
+            "writer": "writer",
+            "editor": "editor",
+            "verifier": "verifier",
+        }
+        tier_key = tier_mapping.get(agent_type, agent_type)
+        tier = self.tiers.get(tier_key, "premium")
+        
+        # NEU: Writer-Provider Auswahl (OpenAI vs Gemini)
+        if agent_type == "writer":
+            writer_provider = self.tiers.get("writerProvider", "openai")
+            if writer_provider == "gemini":
+                # Gemini-Modelle für Writer
+                if tier == "premium":
+                    return "gemini-3-pro-preview", "gemini"
+                else:
+                    return "gemini-2.5-flash", "gemini"
         
         # Mapping: Evidence-Gated Agent -> Config Agent Type
         type_mapping = {
@@ -1086,6 +1104,24 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
                     "input": response.usage.prompt_tokens if hasattr(response, 'usage') else 0,
                     "output": response.usage.completion_tokens if hasattr(response, 'usage') else 0
                 }
+            elif provider == "gemini":
+                import google.generativeai as genai
+                from config import GEMINI_API_KEY
+                
+                genai.configure(api_key=GEMINI_API_KEY)
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        max_output_tokens=16000
+                    )
+                )
+                article = response.text
+                # Gemini gibt Token-Counts in usage_metadata
+                tokens = {
+                    "input": response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0,
+                    "output": response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0
+                }
             else:
                 from anthropic import Anthropic
                 from config import ANTHROPIC_API_KEY
@@ -1832,6 +1868,23 @@ Der finale Artikel ist für LESER bestimmt, NICHT für Editoren. Daher:
                 tokens = {
                     "input": response.usage.prompt_tokens if hasattr(response, 'usage') else 0,
                     "output": response.usage.completion_tokens if hasattr(response, 'usage') else 0
+                }
+            elif provider == "gemini":
+                import google.generativeai as genai
+                from config import GEMINI_API_KEY
+                
+                genai.configure(api_key=GEMINI_API_KEY)
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    prompt,
+                    generation_config=genai.GenerationConfig(
+                        max_output_tokens=16000
+                    )
+                )
+                revised_article = response.text
+                tokens = {
+                    "input": response.usage_metadata.prompt_token_count if hasattr(response, 'usage_metadata') else 0,
+                    "output": response.usage_metadata.candidates_token_count if hasattr(response, 'usage_metadata') else 0
                 }
             else:
                 from anthropic import Anthropic
