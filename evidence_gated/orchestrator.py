@@ -1003,6 +1003,10 @@ OUTPUT: NUR JSON, kein anderer Text!
         chapter_min_words = format_spec["chapter_min"]
         format_label = format_spec["label"]
         
+        # Maximale Quellennummer für Writer-Warnung
+        max_source_idx = max(self.source_index.values()) if self.source_index else 0
+        invalid_example = max_source_idx + 5  # Beispiel für ungültige Referenz
+        
         prompt = f"""Du bist ein wissenschaftlicher Autor und schreibst einen Expertenartikel.
 
 # KERNFRAGE
@@ -1019,11 +1023,14 @@ OUTPUT: NUR JSON, kein anderer Text!
 
 # STRIKTE SCHREIBREGELN
 
-## 1. Quellenverweise
-- Verwende NUR die Quellennummern [1], [2], [3] etc. wie oben angegeben
+## 1. Quellenverweise (KRITISCH!)
+- Es existieren NUR Quellen [1] bis [{max_source_idx}] - KEINE ANDEREN!
+- Verwende AUSSCHLIESSLICH diese Nummern: [1], [2], ... [{max_source_idx}]
+- ERFINDE KEINE Quellenreferenzen! Referenzen wie [{invalid_example}] oder höher existieren NICHT!
 - Setze Quellenverweise DIREKT nach der Aussage: "ServiceNow ist eine Cloud-Plattform [1]."
 - Bei mehreren Quellen: "Dies wird von mehreren Studien bestätigt [2][3][5]."
 - KEINE Claim-Anchors im Text! Die (C-01) etc. sind nur für dich zur Orientierung.
+- Wenn du keine passende Quelle hast: Schreibe die Aussage OHNE Referenz oder lasse sie weg!
 
 ## 2. Artikellänge (KRITISCH!)
 - Ziel: {words_min}-{words_max} Wörter ({target_pages} Seiten)
@@ -1122,6 +1129,9 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
                 }
             )
             
+            # Post-Processing: Entferne ungültige Quellenreferenzen
+            article = self._sanitize_source_references(article)
+            
             return article
             
         except Exception as e:
@@ -1132,6 +1142,41 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
                 error=str(e)
             )
             raise
+    
+    def _sanitize_source_references(self, text: str) -> str:
+        """Entfernt ungültige Quellenreferenzen aus dem Text.
+        
+        Prüft alle [X] Referenzen und entfernt solche, die nicht in source_index existieren.
+        """
+        if not self.source_index:
+            return text
+        
+        # Maximale gültige Quellennummer
+        max_valid_idx = max(self.source_index.values())
+        
+        # Finde alle Referenzen [X] im Text
+        def replace_invalid_ref(match):
+            ref_num = int(match.group(1))
+            if ref_num > max_valid_idx or ref_num < 1:
+                # Ungültige Referenz - entfernen
+                return ""
+            return match.group(0)  # Gültige Referenz behalten
+        
+        # Ersetze ungültige Referenzen
+        sanitized = re.sub(r'\[(\d+)\]', replace_invalid_ref, text)
+        
+        # Bereinige doppelte Leerzeichen die entstehen könnten
+        sanitized = re.sub(r'  +', ' ', sanitized)
+        
+        # Zähle entfernte Referenzen für Logging
+        original_refs = set(int(m) for m in re.findall(r'\[(\d+)\]', text))
+        remaining_refs = set(int(m) for m in re.findall(r'\[(\d+)\]', sanitized))
+        removed_refs = original_refs - remaining_refs
+        
+        if removed_refs:
+            print(f"[Sanitize] Entfernte ungültige Referenzen: {sorted(removed_refs)} (max gültig: {max_valid_idx})")
+        
+        return sanitized
     
     def _add_bibliography(self) -> str:
         """Fügt Literaturverzeichnis mit konsistenter Nummerierung hinzu.
@@ -1361,10 +1406,8 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
         has_exec_summary = "Executive Summary" in self.article or "Management Summary" in self.article
         has_limitations = "Limitation" in self.article
         
-        # === NEU: ClaimRegister für Editor aufbereiten ===
-        claims_summary = self._format_claims_for_editor()
-        
         # === NEU: Quellen-Snippets für Editor aufbereiten ===
+        # HINWEIS: Claims werden nicht mehr an Editor gesendet - nur der Artikel selbst wird geprüft
         sources_summary = self._format_sources_for_editor()
         
         # Format-spezifische Prüfkriterien
@@ -1379,7 +1422,7 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
         prompt = f"""Du bist ein kritischer Editor für wissenschaftliche Fachartikel.
 
 # ARTIKEL ZU PRÜFEN
-{self.article[:15000]}  # Erste 15000 Zeichen
+{self.article[:40000]}  # Erhöht von 15000 auf 40000 für vollständige Prüfung
 
 # ZIEL-FORMAT: {format_label} ({words_min}-{words_max} Wörter)
 
@@ -1389,13 +1432,13 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
 - Executive Summary vorhanden: {has_exec_summary}
 - Limitations-Abschnitt vorhanden: {has_limitations}
 
-# CLAIMS DIE BELEGT SEIN MÜSSEN
-{claims_summary}
-
-# VERFÜGBARE QUELLEN
+# VERFÜGBARE QUELLEN (zum Faktencheck)
 {sources_summary}
 
 # PRÜFKRITERIEN
+
+WICHTIG: Prüfe NUR den ARTIKEL-TEXT oben! 
+Ignoriere Claims die nicht im Artikel vorkommen - wenn etwas nicht im Artikel steht, ist es KEIN Problem!
 
 ## 1. Länge (KRITISCH!)
 - ZIEL: {words_min}-{words_max} Wörter ({format_label})
@@ -1418,10 +1461,13 @@ SCHREIBE JETZT DEN VOLLSTÄNDIGEN ARTIKEL ({words_min}-{words_max} Wörter):"""
 - Gibt es Lücken oder fehlende wichtige Aspekte?
 
 ## 5. HALLUZINATIONS-CHECK (KRITISCH!)
+- Prüfe NUR Aussagen die TATSÄCHLICH IM ARTIKEL STEHEN!
+- Wenn eine Behauptung NICHT im Artikel vorkommt → KEIN Issue melden!
 - Prüfe: Welche Faktenbehauptungen im Artikel haben KEINE Quellenreferenz [X]?
 - Vergleiche Aussagen im Artikel mit den verfügbaren Quellen oben
 - Wenn der Artikel Fakten behauptet die NICHT durch eine der Quellen gedeckt sind → type="hallucination"
 - Besonders kritisch: Zahlen, Statistiken, Zitate ohne [X]-Referenz
+- NICHT prüfen: Dinge die "fehlen" oder "nicht erwähnt werden" - das ist KEIN Halluzinations-Problem!
 
 # OUTPUT-FORMAT (JSON!)
 
@@ -1503,6 +1549,11 @@ DEIN VERDICT:"""
                 }
             
             # Verdict parsen
+            # DEBUG: Log raw response für Analyse
+            print(f"[Editor DEBUG] Response length: {len(result_text)}")
+            print(f"[Editor DEBUG] First 500 chars: {result_text[:500]}")
+            print(f"[Editor DEBUG] Last 500 chars: {result_text[-500:]}")
+            
             verdict = EditorVerdict.from_response(result_text)
             
             # === LOGGING: End Editor Step ===
@@ -1518,7 +1569,12 @@ DEIN VERDICT:"""
                     "issues": [issue.to_dict() for issue in verdict.issues],  # Komplette Issue-Details!
                     "summary": verdict.summary,  # Editor-Zusammenfassung
                     "word_count_checked": word_count,
-                    "model_used": model_name
+                    "model_used": model_name,
+                    # DEBUG: Wie viel vom Artikel hat der Editor gesehen?
+                    "debug_article_chars_sent": min(len(self.article), 40000),
+                    "debug_article_total_chars": len(self.article),
+                    # DEBUG: Raw Editor Response (erste 2000 Zeichen für Analyse)
+                    "debug_raw_response_preview": result_text[:2000] if result_text else ""
                 }
             )
             
@@ -1643,11 +1699,16 @@ DEIN VERDICT:"""
             content=f"✏️ Überarbeite Artikel mit {model_name}..."
         )
         
-        # Feedback aufbereiten
+        # Feedback aufbereiten - mit expliziten Anweisungen
         issues_text = ""
         for issue in verdict.issues:
             issues_text += f"- [{issue.severity.upper()}] {issue.type}: {issue.description}\n"
-            issues_text += f"  Aktion: {issue.suggested_action}\n"
+            if issue.suggested_action == "remove":
+                issues_text += f"  ⚠️ AKTION: LÖSCHE DEN GESAMTEN SATZ! Keine weichere Formulierung!\n"
+            elif issue.suggested_action == "research":
+                issues_text += f"  AKTION: Ergänze Quellenbeleg oder LÖSCHE falls keine Quelle vorhanden\n"
+            else:
+                issues_text += f"  Aktion: {issue.suggested_action}\n"
         
         # Neue Quellen falls vorhanden
         new_sources_text = ""
@@ -1686,14 +1747,37 @@ Behebe EXAKT die oben genannten Probleme. Nicht mehr, nicht weniger.
 - "consistency": Korrigiere PRÄZISE die genannten Widersprüche
 - "length": Erweitere die KONKRET kritisierten dünnen Passagen
 
-## HALLUZINATIONS-BEHANDLUNG (KRITISCH!)
-- Bei action "remove": LÖSCHE den gesamten Satz/Passage mit der unbelegten Behauptung!
-  - Ersetze NICHT durch ähnliche Behauptung
-  - Erfinde KEINE alternativen Zahlen
-  - Lass die Stelle einfach weg oder formuliere allgemeiner ohne konkrete Zahlen
-  - Beispiel: "Frameraten von unter 20 FPS" → komplett streichen oder "Performance-Probleme wurden berichtet"
-- Bei action "research": Ergänze Quellenreferenz [X] NUR wenn die neue Quelle EXAKT diese Behauptung belegt
-  - Wenn neue Quelle andere Zahlen nennt → passe die Zahl im Artikel an die Quelle an!
+## HALLUZINATIONS-BEHANDLUNG (KRITISCH - LIES DAS GENAU!)
+
+### Bei action "remove": KOMPLETTE LÖSCHUNG!
+**WICHTIG:** "remove" bedeutet den GESAMTEN SATZ LÖSCHEN, nicht nur die Zahlen ersetzen!
+
+FALSCH:
+- "Studien zeigen 30-55% Produktivitätssteigerung" → "Studien diskutieren Produktivitätssteigerung"
+- Das ist KEINE Löschung, das ist eine Abschwächung! Der Editor wird das WIEDER finden!
+
+RICHTIG:
+- "Studien zeigen 30-55% Produktivitätssteigerung" → SATZ KOMPLETT STREICHEN
+- Der Satz verschwindet aus dem Artikel, keine weichere Version!
+
+### Konkrete Regeln für "remove":
+1. Finde den GANZEN SATZ der die unbelegte Behauptung enthält
+2. LÖSCHE den Satz KOMPLETT aus dem Artikel
+3. Wenn nötig, passe den Übergang zum nächsten Satz an
+4. KEINE "softeren" Formulierungen wie "Es wird diskutiert...", "Berichte deuten an..."
+
+### WICHTIG: Abschnitte NICHT leer lassen!
+Nach dem Löschen von Halluzinationen:
+- Prüfe ob der Abschnitt noch genug Inhalt hat (mind. 2-3 Absätze)
+- Wenn ein Abschnitt fast leer wird: Fülle ihn mit BELEGTEN Informationen aus den verfügbaren Quellen
+- Nutze Fakten aus dem Quellenmaterial die zum Abschnittsthema passen
+- Jeder neue Satz MUSS eine Quellenreferenz [X] haben
+- Lieber kürzere, belegte Abschnitte als leere Überschriften!
+
+### Bei action "research": 
+- Ergänze Quellenreferenz [X] NUR wenn die neue Quelle EXAKT diese Behauptung belegt
+- Wenn neue Quelle andere Zahlen nennt → passe die Zahl im Artikel an die Quelle an!
+- Wenn keine passende Quelle gefunden wurde → behandle wie "remove"!
 
 ## Qualitätsprinzipien
 1. CHIRURGISCHE PRÄZISION: Ändere nur, was kritisiert wurde
@@ -1714,6 +1798,11 @@ Der finale Artikel ist für LESER bestimmt, NICHT für Editoren. Daher:
 - Keine proaktiven "Verbesserungen" an Stellen ohne Kritik
 - Kein Fülltext - jede Ergänzung muss einen Issue adressieren
 - Der wissenschaftliche Ton bleibt durchgehend sachlich
+
+## LÄNGEN-CHECK
+- Aktuelle Wörter: {current_word_count}
+- Zielbereich: 1200-1800 Wörter (Übersichtsartikel)
+- Wenn nach Löschungen die Wortanzahl unter 1200 fällt: Erweitere belegte Abschnitte!
 
 ÜBERARBEITETER ARTIKEL:"""
 
@@ -1788,7 +1877,7 @@ Der finale Artikel ist für LESER bestimmt, NICHT für Editoren. Daher:
                 
                 return self.article  # Behalte das Original!
             
-            # === LOGGING: End Revision Step ===
+            # === LOGGING: End Revision Step (mit Debug-Details) ===
             self.logger.end_step(
                 step_idx,
                 status="success",
@@ -1797,7 +1886,18 @@ Der finale Artikel ist für LESER bestimmt, NICHT für Editoren. Daher:
                 details={
                     "issues_addressed": len(verdict.issues),
                     "new_word_count": word_count,
-                    "model_used": model_name
+                    "model_used": model_name,
+                    # DEBUG: Was wurde an den Reviser gesendet?
+                    "debug_issues_sent": [
+                        {
+                            "type": iss.type,
+                            "action": iss.suggested_action,
+                            "description": iss.description[:150]
+                        }
+                        for iss in verdict.issues
+                    ],
+                    # DEBUG: Erste 1000 Zeichen der Revision (um zu sehen was gemacht wurde)
+                    "debug_revision_preview": revised_article[:1000] if revised_article else ""
                 }
             )
             
@@ -1806,6 +1906,9 @@ Der finale Artikel ist für LESER bestimmt, NICHT für Editoren. Daher:
                 agent_name="Writer",
                 content=f"✅ Revision: {word_count} Wörter"
             )
+            
+            # Post-Processing: Entferne ungültige Quellenreferenzen
+            revised_article = self._sanitize_source_references(revised_article)
             
             return revised_article
             
