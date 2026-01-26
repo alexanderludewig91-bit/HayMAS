@@ -46,16 +46,16 @@ export function PlanningView({
   // Berechne geschätzte Kosten basierend auf aktiven Tiers
   const estimateCost = () => {
     const costs: Record<string, Record<Tier, number>> = {
-      orchestrator: { premium: 0.05, budget: 0.02 },
-      researcher: { premium: 0.03, budget: 0.01 },
-      writer: { premium: 0.15, budget: 0.08 },
-      editor: { premium: 0.05, budget: 0.01 },
+      orchestrator: { premium: 0.08, budget: 0.03 },  // ClaimMiner
+      writer: { premium: 0.15, budget: 0.08 },        // Writer + Revisionen
+      editor: { premium: 0.05, budget: 0.01 },        // Editor Reviews
     };
     
     let total = costs.orchestrator[tiers.orchestrator || 'premium'];
-    total += activeRounds * costs.researcher[tiers.researcher || 'premium'];
+    // Recherche ist tool-basiert (MCP), ca. $0.01 pro Runde für Tavily etc.
+    total += activeRounds * 0.01;
     total += (plan.use_editor ? 2 : 1) * costs.writer[tiers.writer || 'premium'];
-    if (plan.use_editor) total += costs.editor[tiers.editor || 'premium'];
+    if (plan.use_editor) total += 2 * costs.editor[tiers.editor || 'premium']; // ~2 Reviews
     
     return total.toFixed(2);
   };
