@@ -64,33 +64,6 @@ export function IdleView({
         <p className="text-center text-xs text-neutral-400 mt-3">
           Der Evidence-Gated-Prozess recherchiert, prüft und schreibt automatisch
         </p>
-
-        <div className="mt-6 flex gap-2 justify-center">
-          <button
-            type="button"
-            onClick={() => onQuestionChange('Wie beeinflusst KI die ServiceNow Plattform? Gehe insbesondere auf Now Assist und die Agentic AI Funktionen ein.')}
-            className="text-sm text-neutral-500 hover:text-neutral-700 px-3 py-1 rounded hover:bg-neutral-100 transition-colors"
-            disabled={isGenerating}
-          >
-            Beispiel: ServiceNow
-          </button>
-          <button
-            type="button"
-            onClick={() => onQuestionChange('Warum ist die Banane krumm?')}
-            className="text-sm text-neutral-500 hover:text-neutral-700 px-3 py-1 rounded hover:bg-neutral-100 transition-colors"
-            disabled={isGenerating}
-          >
-            Beispiel: Banane
-          </button>
-          <button
-            type="button"
-            onClick={() => onQuestionChange('Was sind aktuelle KI Tools für AI Coding neben Cursor? Welche neuen Tools gibt es 2025/2026?')}
-            className="text-sm text-neutral-500 hover:text-neutral-700 px-3 py-1 rounded hover:bg-neutral-100 transition-colors"
-            disabled={isGenerating}
-          >
-            Beispiel: AI Coding
-          </button>
-        </div>
       </div>
     </div>
   );

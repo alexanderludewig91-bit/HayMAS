@@ -10,44 +10,43 @@ Diese Issues müssen als nächstes behoben werden!
 
 | Status | Issue | Beschreibung | Auswirkung |
 |--------|-------|--------------|------------|
-| ⬜ | **ClaimMiner JSON-Parsing** | Claude liefert manchmal kein valides JSON → Fallback mit 0 Claims | Artikel ohne Quellen! |
-| 🔄 | **Halluzinations-Check via Editor** | Editor-Prompt schärfen: ClaimRegister + Quellen mitgeben, explizit nach unbelegten Fakten fragen | Keine Halluzinations-Prüfung |
-| ⏸️ | **Gemini-Verifikation (optional)** | Cross-LLM als Premium-Feature für kritische Artikel – erstmal Editor schärfen | Marginaler Mehrwert bei doppelten Kosten |
+| ✅ | **ClaimMiner JSON-Parsing** | `_parse_json_robust` mit mehreren Fallback-Strategien | Behoben! |
+| ✅ | **Halluzinations-Check via Editor** | Editor-Prompt mit ClaimRegister + Quellen, expliziter `type="hallucination"` | Implementiert! |
+| ⏸️ | **Gemini-Verifikation (optional)** | Cross-LLM als Premium-Feature für kritische Artikel | Auf Eis - Editor funktioniert |
 | ⬜ | **Independence Score** | C-Claims brauchen 2+ **unabhängige** Quellen (nicht vom selben Publisher) | Quellenvielfalt nicht garantiert |
-| ⬜ | **Claim Coverage Tracking** | Prüfen ob alle Claims im Artikel vorkommen | Claims können fehlen |
-| ⬜ | **Halluzinations-Check** | Prüfen ob Writer Fakten ohne Quellen erfunden hat | Erfundene Quellen möglich |
+| ❌ | ~~Claim Coverage Tracking~~ | ~~Prüfen ob alle Claims im Artikel~~ | **Verworfen** - Editor darf Claims entfernen! |
 | ⬜ | **Modell-Fallbacks** | Graceful Fallback wenn Modell nicht verfügbar | API-Fehler bei unbekanntem Modell |
 
-### Nächste Schritte:
-1. **ClaimMiner robuster machen** - JSON-Parsing mit Fallback verbessern
-2. **Editor-Prompt schärfen** - ClaimRegister + Quellen-Snippets mitgeben, neuer Issue-Typ `hallucination`
-3. **Artikellänge fixen** - Format-Parameter durchreichen, Ober- UND Untergrenzen
+### ✅ Erledigte Schritte:
+1. ~~**ClaimMiner robuster machen**~~ - `_parse_json_robust` mit Regex-Fallbacks
+2. ~~**Editor-Prompt schärfen**~~ - ClaimRegister + Quellen-Snippets + Issue-Typ `hallucination`
+3. ~~**Artikellänge fixen**~~ - FORMAT_SPECS mit `words_min`/`words_max` + `min_claims`
 
-### Halluzinations-Check (Details)
+### ✅ Halluzinations-Check (Implementiert!)
 
-Der bestehende Editorial Review (Claude) wird erweitert:
+Der Editorial Review wurde erweitert:
 
-**Input erweitern:**
-- Artikel (wie bisher)
-- ClaimRegister mit allen Claims
+**Input:**
+- Artikel
+- ClaimRegister mit allen Claims  
 - Quellen-Snippets (Titel + URL + Kernaussage)
 
-**Neue Prüffrage im Prompt:**
-> "Prüfe: Welche Faktenbehauptungen im Artikel haben KEINE Quellenreferenz [X]? Liste diese als Issue mit type='hallucination'."
+**Prompt enthält:**
+> "Prüfe: Welche Faktenbehauptungen im Artikel haben KEINE Quellenreferenz [X]? → type='hallucination'"
 
-**Neuer Issue-Typ:**
+**Issue-Typ im JSON:**
 ```json
 {
   "type": "hallucination",
   "description": "Aussage X hat keine Quellenreferenz",
   "location": "Abschnitt Y, Satz Z",
-  "action": "remove_or_research"
+  "suggested_action": "remove|research"
 }
 ```
 
-**Konsequenz:**
-- `action: "remove"` → Writer entfernt die Passage
-- `action: "research"` → GapRetriever sucht Quelle, dann Writer ergänzt
+**Verhalten:**
+- `suggested_action: "remove"` → Reviser entfernt die Passage (Standard!)
+- `suggested_action: "research"` → GapRetriever sucht Quelle, dann Reviser ergänzt
 
 ---
 
@@ -61,42 +60,34 @@ Identifizierte Probleme bei der kritischen Durchsicht des Session-Logs.
 |--------|-------|--------------|-----|
 | ✅ | **Irrelevante Quellen im Literaturverzeichnis** | Alle recherchierten Quellen wurden aufgenommen, auch nicht verwendete | `_add_bibliography` filtert jetzt nach `[X]`-Referenzen im Text |
 | ✅ | **Prozess-Artefakte im Artikel** | Meta-Kommentare wie "(Abschnitt vervollständigt)" im finalen Text | `_polish_article` entfernt Artefakte + Prompt-Fix |
+| ✅ | **Tier-Modell-Inkonsistenz** | ClaimMiner nutzt falsches Tier | `tier_mapping` in `_get_model()` mappt korrekt |
+| ✅ | **Semantic Scholar nie verwendet** | Tool wird jetzt verwendet | Wird bei akademischen Themen ausgewählt (2+ Logs) |
+| ❌ | **Claim Coverage Tracking** | War: "Prüfen ob alle Claims im Artikel" | **Verworfen** - Editor darf Claims entfernen (Halluzinationen)! |
 
 ### Offen ⬜
 
 | Status | Issue | Beschreibung | Auswirkung |
 |--------|-------|--------------|------------|
-| ⬜ | **Tier-Modell-Inkonsistenz** | ClaimMiner nutzt `claude-opus-4-5` obwohl Tier "budget" gewählt | Falsche Kostenberechnung, teurer als erwartet |
-| ⬜ | **Claims verschwinden beim Retrieval** | 23 Claims gemined → nur 21 processed (2 fehlen) | Nicht alle Claims werden recherchiert |
-| ⬜ | **Semantic Scholar nie verwendet** | Tool wird nie ausgewählt, obwohl für wissenschaftliche Themen relevant | Fehlende akademische Quellen |
+| ✅ | ~~Claims verschwinden beim Retrieval~~ | 23→21 Claims | **Korrekt!** A-Claims (Allgemeinwissen) brauchen keine Recherche |
 | ⬜ | **Editorial "approved" mit offenen Issues** | verdict="approved" aber issues_count=4 – logisch inkonsistent | Unklar ob Artikel wirklich fertig |
 | ⬜ | **GapRetriever Logging unvollständig** | `tool_calls: []` leer, obwohl 13 Quellen gefunden | Debugging/Transparenz eingeschränkt |
 
-### Artikellänge-Problem (kritisch!)
+### ✅ Artikellänge-Problem (Gelöst!)
 
-| Status | Issue | Beschreibung | Auswirkung |
-|--------|-------|--------------|------------|
-| ⬜ | **Format-Parameter nicht durchgereicht** | Frontend-Auswahl "Fachartikel 8-10 Seiten" kommt nicht beim Writer-Prompt an | Prompts sind hardcoded auf 12-15 Seiten |
-| ⬜ | **Nur Mindest-, keine Maximallänge** | Prompts fordern "MINDESTENS 3000 Wörter" ohne Obergrenze | Artikel werden 2x so lang wie gewählt (6500 statt 3500 Wörter) |
-| ⬜ | **Claim-Anzahl ignoriert Format** | Immer 20+ Claims, unabhängig von gewählter Länge | Zu viele Claims → zu langer Artikel |
+| Status | Issue | Beschreibung | Fix |
+|--------|-------|--------------|-----|
+| ✅ | **Format-Parameter nicht durchgereicht** | FORMAT_SPECS im Orchestrator | `self.format` durchgängig verwendet |
+| ✅ | **Nur Mindest-, keine Maximallänge** | `words_min` + `words_max` | Prompts: "zwischen X und Y Wörter" |
+| ✅ | **Claim-Anzahl ignoriert Format** | `min_claims` + `min_c_claims` pro Format | ClaimMiner bekommt Format-Parameter |
 
-### Lösungsvorschläge Artikellänge
+### ✅ Implementierte FORMAT_SPECS
 
-1. **Format-Parameter durchreichen**
-   - `settings.format` bis zum ClaimBoundedWriter transportieren
-   - Prompts dynamisch nach Format anpassen
-
-2. **Format-spezifische Vorgaben**
-   | Format | Seiten | Wörter | Claims |
-   |--------|--------|--------|--------|
-   | Overview | 4-5 | 1600-2000 | 6-8 |
-   | Fachartikel | 8-10 | 3200-4000 | 12-15 |
-   | Expertenbericht | 12-15 | 4800-6000 | 18-22 |
-   | Deep-Dive | 20-25 | 8000-10000 | 25-30 |
-
-3. **Wortlimits mit Ober- UND Untergrenze**
-   - Aktuell: "MINDESTENS 3000 Wörter"
-   - Besser: "zwischen 3200 und 4000 Wörter (8-10 Seiten)"
+| Format | Seiten | Wörter | Claims (min) | C-Claims (min) |
+|--------|--------|--------|--------------|----------------|
+| overview | 4 | 1200-1800 | 6 | 2 |
+| article | 8 | 2400-3200 | 10 | 4 |
+| report | 12 | 3600-4800 | 15 | 6 |
+| deep_dive | 20 | 6000-8000 | 22 | 8 |
 
 ---
 
@@ -213,25 +204,25 @@ Mehr und bessere Quellen pro Artikel.
 
 ---
 
-## 3. Output-Formate
+## 3. Output-Formate ✅
 
-Verschiedene Artikel-Längen und -Formate anbieten.
+Verschiedene Artikel-Längen und -Formate sind implementiert!
 
 | Status | Format | Umfang | Beschreibung |
 |--------|--------|--------|--------------|
-| ⬜ | Executive Summary | ~0,5 Seiten | Kernaussagen in 3-5 Absätzen |
-| ⬜ | Management Summary Extended | ~2-3 Seiten | Zusammenfassung mit Empfehlungen |
-| ⬜ | Kurzer Artikel | ~8 Seiten | Kompakter Wissensartikel |
-| ✅ | Standard-Artikel | ~15 Seiten | Aktuelles Format (2000+ Wörter) |
-| ⬜ | Deep-Dive | ~25+ Seiten | Ausführlicher Fachartikel |
+| ✅ | **overview** | ~4 Seiten | Kompakte Übersicht (1200-1800 Wörter) |
+| ✅ | **article** | ~8 Seiten | Standard-Fachartikel (2400-3200 Wörter) |
+| ✅ | **report** | ~12 Seiten | Ausführlicher Report (3600-4800 Wörter) |
+| ✅ | **deep_dive** | ~20 Seiten | Tiefgehende Analyse (6000-8000 Wörter) |
+| ⬜ | Executive Summary | ~0,5 Seiten | Kernaussagen in 3-5 Absätzen (noch nicht) |
 
-### Umsetzung
+### Umsetzung ✅
 
 | Status | Task |
 |--------|------|
-| ⬜ | Format-Auswahl in IdleView/PlanningView hinzufügen |
-| ⬜ | Writer-Prompts pro Format erstellen |
-| ⬜ | Recherche-Tiefe an Format koppeln (kurz = 2 Runden, lang = 5+) |
+| ✅ | Format-Auswahl im **PromptRefiner** (Frontend) |
+| ✅ | Writer-Prompts dynamisch aus FORMAT_SPECS |
+| ✅ | Claim-Anzahl an Format gekoppelt (min_claims pro Format) |
 
 ---
 
@@ -320,7 +311,16 @@ Nicht "1 Klick → 15 Seiten", sondern iterativer Prozess:
 | 2026-01-25 | **✅ Fix:** Literaturverzeichnis filtert jetzt irrelevante Quellen (nur referenzierte aufnehmen) |
 | 2026-01-25 | **✅ Fix:** Prozess-Artefakte werden aus Artikel entfernt (`_polish_article`) |
 | 2026-01-25 | **📋 Log-Analyse:** 7 neue Issues identifiziert (Tier-Inkonsistenz, Artikellänge, Tool-Auswahl, etc.) |
+| 2026-01-27 | **🎉 Evidence-Gated Flow komplett:** 8-Phasen Workflow produktiv |
+| 2026-01-27 | **✅ ClaimMiner JSON-Parsing:** `_parse_json_robust` mit Fallbacks |
+| 2026-01-27 | **✅ Halluzinations-Check:** Editor prüft explizit auf unbelegt Fakten |
+| 2026-01-27 | **✅ FORMAT_SPECS:** 4 Formate (overview, article, report, deep_dive) mit Wort-/Claim-Limits |
+| 2026-01-27 | **✅ PromptRefiner:** Frontend-Feature zur Prompt-Optimierung vor Generierung |
+| 2026-01-27 | **✅ Multi-LLM:** Anthropic, OpenAI, Google Gemini integriert |
+| 2026-01-27 | **✅ Tier-Mapping:** `_get_model()` mappt Agenten korrekt auf Tiers |
+| 2026-01-27 | **❌ Claim Coverage:** Verworfen - Editor darf Claims entfernen (by design) |
+| 2026-01-27 | **📋 Backlog-Update:** 15 Items abgehakt/verworfen! |
 
 ---
 
-*Zuletzt aktualisiert: 25.01.2026*
+*Zuletzt aktualisiert: 27.01.2026*

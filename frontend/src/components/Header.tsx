@@ -8,8 +8,8 @@ interface HeaderProps {
 export function Header({ onArchiveClick, onSettingsClick }: HeaderProps) {
   return (
     <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-neutral-200 flex items-center justify-between px-6 z-50">
-      <div className="flex items-center gap-3">
-        <span className="text-xl">📚</span>
+      <div className="flex items-center gap-2">
+        <img src="/logo.png" alt="HayMAS" className="h-8 w-8 rounded-lg" />
         <span className="font-semibold text-neutral-900">HayMAS</span>
       </div>
 
