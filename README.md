@@ -109,6 +109,12 @@ npm install
 
 ### 3. API-Keys konfigurieren
 
+**Option A: Im Frontend (empfohlen)**
+
+Klicke auf das Zahnrad-Icon (⚙️) oben rechts in der Anwendung. Dort können alle API-Keys direkt eingegeben und gespeichert werden. Die Keys werden persistent in `data/config.json` gespeichert.
+
+**Option B: Via .env Datei**
+
 Erstelle eine `.env` Datei im HayMAS-Verzeichnis:
 
 ```env
@@ -118,6 +124,8 @@ TAVILY_API_KEY=tvly-...
 # Optional:
 GEMINI_API_KEY=...
 ```
+
+> **Hinweis:** Im Frontend eingegebene Keys überschreiben die .env Werte.
 
 ### 4. Anwendung starten
 
@@ -263,7 +271,7 @@ HayMAS/
 │       │   ├── ProducingView.tsx   # Live-Fortschritt
 │       │   ├── CompleteView.tsx    # Artikel-Anzeige
 │       │   ├── ArchiveDrawer.tsx   # Artikel-Archiv
-│       │   └── SettingsDrawer.tsx  # Tier-Einstellungen
+│       │   └── SettingsDrawer.tsx  # API-Keys & Tier-Einstellungen
 │       ├── hooks/useStudio.ts
 │       ├── lib/api.ts
 │       └── types/index.ts
