@@ -58,6 +58,34 @@ Intelligenter Dialog vor der Artikelgenerierung:
 
 ## 🚀 Quick Start
 
+### Option A: Docker (empfohlen)
+
+Die einfachste Installation via Docker:
+
+**1. Image laden** (von [GitHub Release](https://github.com/alexanderludewig91-bit/HayMAS/releases)):
+```bash
+docker load -i haymas-docker.tar.gz
+```
+
+**2. Container starten:**
+```bash
+docker run -d \
+  --name haymas \
+  -p 8000:8000 \
+  -v haymas-data:/app/data \
+  -v haymas-output:/app/output \
+  -v haymas-logs:/app/logs \
+  haymas:latest
+```
+
+**3. Öffnen:** http://localhost:8000
+
+**4. API-Keys konfigurieren:** Klicke auf das Zahnrad-Icon (⚙️) in der Anwendung.
+
+---
+
+### Option B: Lokale Entwicklung
+
 ### 1. Backend Setup
 
 ```bash
@@ -186,10 +214,14 @@ Der Evidence-Gated Workflow läuft ab:
 ```
 HayMAS/
 ├── api.py                  # FastAPI Backend mit SSE
-├── config.py               # Modell-Konfiguration, Tier-System
+├── config.py               # Modell-Konfiguration, Tier-System, API-Key-Verwaltung
 ├── session_logger.py       # Detailliertes Session-Logging (JSON)
 ├── requirements.txt        # Python Dependencies
 ├── BACKLOG.md              # Geplante Features
+├── Dockerfile              # Docker-Image Definition
+├── docker-compose.yml      # Docker Compose Konfiguration
+├── .dockerignore           # Docker Build Excludes
+├── env.example             # Beispiel für .env Datei
 │
 ├── evidence_gated/         # 🆕 Evidence-Gated System
 │   ├── orchestrator.py     # 8-Phasen-Workflow, FORMAT_SPECS
@@ -336,6 +368,44 @@ Siehe `BACKLOG.md` für geplante Features:
 - Weitere Research-Tools (Destatis, OpenCorporates)
 - Kollaborative Artikel-Erstellung
 - Verbesserte Budget-Modelle
+
+---
+
+## 🐳 Docker
+
+### Container-Management
+
+```bash
+# Container starten
+docker start haymas
+
+# Container stoppen
+docker stop haymas
+
+# Logs anzeigen
+docker logs haymas
+
+# In Container-Shell
+docker exec -it haymas /bin/bash
+```
+
+### Daten-Volumes
+
+| Volume | Inhalt |
+|--------|--------|
+| `haymas-data` | API-Keys (config.json) |
+| `haymas-output` | Generierte Artikel (*.md) |
+| `haymas-logs` | Session-Logs (*.json) |
+
+### Eigenes Image bauen
+
+```bash
+# Image bauen
+docker build -t haymas:latest .
+
+# Oder mit docker-compose
+docker-compose up -d
+```
 
 ---
 

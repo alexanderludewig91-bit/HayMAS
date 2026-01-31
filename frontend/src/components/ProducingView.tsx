@@ -1,4 +1,4 @@
-import { Loader2, Square, CheckCircle, Edit3, Search, AlertTriangle, ArrowRight, Clock } from 'lucide-react';
+import { Loader2, Square, CheckCircle, Edit3, Search, AlertTriangle, ArrowRight } from 'lucide-react';
 import type { AgentEvent, EditorVerdict } from '../types';
 
 interface ProducingViewProps {
@@ -223,49 +223,49 @@ export function ProducingView({ question, events, onCancel, isFinished, onViewAr
                     {event.content.length > 300 && '...'}
                   </p>
                   {/* Zusätzliche Details aus event.data */}
-                  {event.data && Object.keys(event.data).length > 0 && (
+                  {event.data && Object.keys(event.data).length > 0 ? (
                     <div className="mt-2 pt-2 border-t border-black/5 text-xs text-neutral-500 flex flex-wrap gap-x-4 gap-y-1">
-                      {event.data.article_path && (
+                      {event.data.article_path ? (
                         <div className="flex items-center gap-1">
                           <span>📄</span>
                           <span className="font-mono">{String(event.data.article_path).split('/').pop()}</span>
                         </div>
-                      )}
-                      {event.data.claims_count && (
-                        <span>✓ {event.data.claims_count} Claims</span>
-                      )}
-                      {event.data.a_claims !== undefined && (
-                        <span className="text-green-600">A:{event.data.a_claims}</span>
-                      )}
-                      {event.data.b_claims !== undefined && (
-                        <span className="text-blue-600">B:{event.data.b_claims}</span>
-                      )}
-                      {event.data.c_claims !== undefined && (
-                        <span className="text-amber-600">C:{event.data.c_claims}</span>
-                      )}
-                      {event.data.total_sources && (
-                        <span>📚 {event.data.total_sources} Quellen</span>
-                      )}
-                      {event.data.claims_fulfilled !== undefined && event.data.claims_processed && (
-                        <span>✅ {event.data.claims_fulfilled}/{event.data.claims_processed} Claims erfüllt</span>
-                      )}
-                      {event.data.tools_used && Array.isArray(event.data.tools_used) && (
+                      ) : null}
+                      {event.data.claims_count ? (
+                        <span>✓ {String(event.data.claims_count)} Claims</span>
+                      ) : null}
+                      {event.data.a_claims !== undefined ? (
+                        <span className="text-green-600">A:{String(event.data.a_claims)}</span>
+                      ) : null}
+                      {event.data.b_claims !== undefined ? (
+                        <span className="text-blue-600">B:{String(event.data.b_claims)}</span>
+                      ) : null}
+                      {event.data.c_claims !== undefined ? (
+                        <span className="text-amber-600">C:{String(event.data.c_claims)}</span>
+                      ) : null}
+                      {event.data.total_sources ? (
+                        <span>📚 {String(event.data.total_sources)} Quellen</span>
+                      ) : null}
+                      {event.data.claims_fulfilled !== undefined && event.data.claims_processed ? (
+                        <span>✅ {String(event.data.claims_fulfilled)}/{String(event.data.claims_processed)} Claims erfüllt</span>
+                      ) : null}
+                      {event.data.tools_used && Array.isArray(event.data.tools_used) ? (
                         <span>🔧 {(event.data.tools_used as string[]).join(', ')}</span>
-                      )}
-                      {event.data.word_count && (
-                        <span>📝 {event.data.word_count} Wörter</span>
-                      )}
-                      {event.data.char_count && (
+                      ) : null}
+                      {event.data.word_count ? (
+                        <span>📝 {String(event.data.word_count)} Wörter</span>
+                      ) : null}
+                      {event.data.char_count ? (
                         <span>({Math.round(Number(event.data.char_count) / 1000)}k Zeichen)</span>
-                      )}
-                      {event.data.sources_rated && (
-                        <span>⚖️ {event.data.sources_rated} bewertet</span>
-                      )}
-                      {event.data.model_used && (
-                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">{event.data.model_used}</span>
-                      )}
+                      ) : null}
+                      {event.data.sources_rated ? (
+                        <span>⚖️ {String(event.data.sources_rated)} bewertet</span>
+                      ) : null}
+                      {event.data.model_used ? (
+                        <span className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded">{String(event.data.model_used)}</span>
+                      ) : null}
                     </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
             </div>

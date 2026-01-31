@@ -1,0 +1,38 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+venv
+.venv
+*.egg-info
+
+# Node
+frontend/node_modules
+frontend/.vite
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# Lokale Daten (werden als Volumes gemountet)
+data/
+output/
+logs/
+
+# Secrets
+.env
+*.env.local
+
+# Tests & Docs
+tests/
+*.md
+!README.md
+
+# Misc
+.DS_Store
+*.log

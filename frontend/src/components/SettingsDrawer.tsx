@@ -1,7 +1,7 @@
-import { X, Check } from 'lucide-react';
+import { X, Check, Eye, EyeOff, Key, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { AgentTiers, ApiStatus, Tier, WriterProvider } from '../types';
-import { getStatus } from '../lib/api';
+import { getSettings, saveApiKeys, type SettingsResponse } from '../lib/api';
 
 interface SettingsDrawerProps {
   open: boolean;
@@ -30,15 +30,58 @@ export function SettingsDrawer({
   onTierChange,
   onWriterProviderChange,
 }: SettingsDrawerProps) {
+  const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [status, setStatus] = useState<ApiStatus | null>(null);
   const writerProvider: WriterProvider = tiers.writerProvider || 'openai';
   const writerTier = tiers.writer || 'premium';
+  
+  // API Key States
+  const [apiKeys, setApiKeys] = useState({
+    anthropic: '',
+    openai: '',
+    gemini: '',
+    tavily: '',
+  });
+  const [showKeys, setShowKeys] = useState({
+    anthropic: false,
+    openai: false,
+    gemini: false,
+    tavily: false,
+  });
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
     if (open) {
-      getStatus().then(setStatus);
+      getSettings().then((data) => {
+        setSettings(data);
+        setStatus(data.api_status);
+      });
     }
   }, [open]);
+  
+  const handleSaveKeys = async () => {
+    setSaving(true);
+    setSaveSuccess(false);
+    try {
+      const keysToSave: Record<string, string> = {};
+      if (apiKeys.anthropic) keysToSave.anthropic = apiKeys.anthropic;
+      if (apiKeys.openai) keysToSave.openai = apiKeys.openai;
+      if (apiKeys.gemini) keysToSave.gemini = apiKeys.gemini;
+      if (apiKeys.tavily) keysToSave.tavily = apiKeys.tavily;
+      
+      if (Object.keys(keysToSave).length > 0) {
+        const result = await saveApiKeys(keysToSave);
+        setSettings(result);
+        setStatus(result.api_status);
+        setApiKeys({ anthropic: '', openai: '', gemini: '', tavily: '' });
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 3000);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   if (!open) return null;
 
@@ -168,30 +211,156 @@ export function SettingsDrawer({
             </div>
           </div>
 
-          {/* API Status */}
+          {/* API Keys */}
           <div>
-            <h3 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-3">
-              API Status
+            <h3 className="text-xs font-semibold text-neutral-500 uppercase tracking-wide mb-3 flex items-center gap-2">
+              <Key size={14} />
+              API Keys
             </h3>
-            {status ? (
-              <div className="space-y-2">
-                {Object.entries(status).map(([key, value]) => (
-                  <div
-                    key={key}
-                    className="flex items-center justify-between p-2 bg-neutral-50 rounded"
+            <div className="space-y-3">
+              {/* Anthropic */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-neutral-700">Anthropic (Claude)</label>
+                  {status?.anthropic ? (
+                    <span className="text-xs text-green-600 flex items-center gap-1"><Check size={12} /> Aktiv</span>
+                  ) : (
+                    <span className="text-xs text-red-500">Fehlt</span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showKeys.anthropic ? 'text' : 'password'}
+                    placeholder={settings?.api_keys.anthropic || 'sk-ant-...'}
+                    value={apiKeys.anthropic}
+                    onChange={(e) => setApiKeys({ ...apiKeys, anthropic: e.target.value })}
+                    className="w-full text-xs p-2 pr-8 bg-neutral-50 border border-neutral-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKeys({ ...showKeys, anthropic: !showKeys.anthropic })}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
                   >
-                    <span className="text-sm text-neutral-700 uppercase">{key}</span>
-                    {value ? (
-                      <Check size={16} className="text-green-500" />
-                    ) : (
-                      <X size={16} className="text-red-400" />
-                    )}
-                  </div>
-                ))}
+                    {showKeys.anthropic ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
               </div>
-            ) : (
-              <div className="text-sm text-neutral-500">Laden...</div>
-            )}
+              
+              {/* OpenAI */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-neutral-700">OpenAI (GPT)</label>
+                  {status?.openai ? (
+                    <span className="text-xs text-green-600 flex items-center gap-1"><Check size={12} /> Aktiv</span>
+                  ) : (
+                    <span className="text-xs text-red-500">Fehlt</span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showKeys.openai ? 'text' : 'password'}
+                    placeholder={settings?.api_keys.openai || 'sk-...'}
+                    value={apiKeys.openai}
+                    onChange={(e) => setApiKeys({ ...apiKeys, openai: e.target.value })}
+                    className="w-full text-xs p-2 pr-8 bg-neutral-50 border border-neutral-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKeys({ ...showKeys, openai: !showKeys.openai })}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                  >
+                    {showKeys.openai ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+              
+              {/* Gemini */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-neutral-700">Google (Gemini)</label>
+                  {status?.gemini ? (
+                    <span className="text-xs text-green-600 flex items-center gap-1"><Check size={12} /> Aktiv</span>
+                  ) : (
+                    <span className="text-xs text-red-500">Fehlt</span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showKeys.gemini ? 'text' : 'password'}
+                    placeholder={settings?.api_keys.gemini || 'AIza...'}
+                    value={apiKeys.gemini}
+                    onChange={(e) => setApiKeys({ ...apiKeys, gemini: e.target.value })}
+                    className="w-full text-xs p-2 pr-8 bg-neutral-50 border border-neutral-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKeys({ ...showKeys, gemini: !showKeys.gemini })}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                  >
+                    {showKeys.gemini ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+              
+              {/* Tavily */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-neutral-700">Tavily (Web Search)</label>
+                  {status?.tavily ? (
+                    <span className="text-xs text-green-600 flex items-center gap-1"><Check size={12} /> Aktiv</span>
+                  ) : (
+                    <span className="text-xs text-red-500">Fehlt</span>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type={showKeys.tavily ? 'text' : 'password'}
+                    placeholder={settings?.api_keys.tavily || 'tvly-...'}
+                    value={apiKeys.tavily}
+                    onChange={(e) => setApiKeys({ ...apiKeys, tavily: e.target.value })}
+                    className="w-full text-xs p-2 pr-8 bg-neutral-50 border border-neutral-200 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowKeys({ ...showKeys, tavily: !showKeys.tavily })}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600"
+                  >
+                    {showKeys.tavily ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+              
+              {/* Save Button */}
+              <button
+                onClick={handleSaveKeys}
+                disabled={saving || (!apiKeys.anthropic && !apiKeys.openai && !apiKeys.gemini && !apiKeys.tavily)}
+                className={`w-full py-2 rounded text-sm font-medium flex items-center justify-center gap-2 transition-colors ${
+                  saveSuccess
+                    ? 'bg-green-500 text-white'
+                    : saving || (!apiKeys.anthropic && !apiKeys.openai && !apiKeys.gemini && !apiKeys.tavily)
+                    ? 'bg-neutral-200 text-neutral-400 cursor-not-allowed'
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                }`}
+              >
+                {saveSuccess ? (
+                  <>
+                    <Check size={16} />
+                    Gespeichert!
+                  </>
+                ) : saving ? (
+                  'Speichern...'
+                ) : (
+                  <>
+                    <Save size={16} />
+                    Keys speichern
+                  </>
+                )}
+              </button>
+              
+              <p className="text-xs text-neutral-400 text-center">
+                Keys werden sicher lokal gespeichert
+              </p>
+            </div>
           </div>
         </div>
       </div>

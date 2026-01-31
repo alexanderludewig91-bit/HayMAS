@@ -1,0 +1,66 @@
+# ============================================================================
+# HayMAS - Docker Compose Konfiguration
+# ============================================================================
+# 
+# Schnellstart:
+#   docker compose up
+# 
+# Dann öffnen: http://localhost:8000
+# 
+# API Keys können in der App unter Einstellungen eingegeben werden,
+# oder über Environment Variables gesetzt werden.
+#
+# ============================================================================
+
+services:
+  haymas:
+    build: .
+    image: haymas:latest
+    container_name: haymas
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistente Daten (API Keys, Konfiguration)
+      - haymas-config:/app/data
+      # Generierte Artikel
+      - haymas-output:/app/output
+      # Logs
+      - haymas-logs:/app/logs
+    environment:
+      # Optional: API Keys können auch hier gesetzt werden
+      # (alternativ in der App unter Einstellungen eingeben)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  # Named Volumes für Persistenz
+  haymas-config:
+    name: haymas-config
+  haymas-output:
+    name: haymas-output
+  haymas-logs:
+    name: haymas-logs
+
+# ============================================================================
+# Alternative: Lokaler Output-Ordner (für direkten Dateizugriff)
+# ============================================================================
+# 
+# Ersetze die volumes-Sektion mit:
+#
+#   volumes:
+#     - haymas-config:/app/data
+#     - ./my-articles:/app/output    # Artikel direkt auf Host
+#     - haymas-logs:/app/logs
+#
+# Dann erscheinen alle Artikel in ./my-articles/
+#
+# ============================================================================

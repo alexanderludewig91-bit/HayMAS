@@ -11,6 +11,7 @@ streamlit>=1.28.0
 anthropic>=0.18.0
 openai>=1.12.0
 google-genai>=0.3.0
+google-generativeai>=0.8.0  # Legacy SDK (google.generativeai)
 
 # Research Tools
 tavily-python>=0.3.0      # Web-Suche (kostenpflichtig)
@@ -19,6 +20,10 @@ httpx>=0.26.0             # Async HTTP für Wikipedia, Hacker News
 
 # PPT-Generierung
 python-pptx>=0.6.21
+
+# PDF-Generierung
+markdown>=3.5.0
+fpdf2>=2.7.0
 
 # Umgebungsvariablen
 python-dotenv>=1.0.0

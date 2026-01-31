@@ -5,6 +5,7 @@ Unterstützt Premium und Budget Modell-Varianten pro Agent.
 """
 
 import os
+import json
 from dotenv import load_dotenv
 from dataclasses import dataclass
 from typing import Dict, Literal
@@ -221,6 +222,7 @@ def get_api_key(provider: str) -> str:
         "anthropic": ANTHROPIC_API_KEY,
         "openai": OPENAI_API_KEY,
         "gemini": GEMINI_API_KEY,
+        "tavily": TAVILY_API_KEY,
     }
     return keys.get(provider, "")
 
@@ -232,3 +234,94 @@ def validate_api_keys() -> Dict[str, bool]:
         "gemini": bool(GEMINI_API_KEY),
         "tavily": bool(TAVILY_API_KEY),
     }
+
+# =============================================================================
+# API Key Management (für Docker/Frontend)
+# =============================================================================
+
+# Pfad zur persistenten Config-Datei (im Container: /app/data/config.json)
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "data", "config.json")
+
+def _load_config() -> Dict:
+    """Lädt die persistente Konfiguration."""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except:
+            pass
+    return {}
+
+def _save_config(config: Dict):
+    """Speichert die persistente Konfiguration."""
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+def reload_api_keys():
+    """
+    Lädt API-Keys neu - priorisiert config.json über .env.
+    Wird beim Server-Start und nach Änderungen aufgerufen.
+    """
+    global ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, TAVILY_API_KEY
+    
+    # Zuerst aus .env laden (Fallback)
+    load_dotenv(override=True)
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
+    
+    # Dann aus config.json überschreiben (falls vorhanden)
+    config = _load_config()
+    api_keys = config.get("api_keys", {})
+    
+    if api_keys.get("anthropic"):
+        ANTHROPIC_API_KEY = api_keys["anthropic"]
+    if api_keys.get("openai"):
+        OPENAI_API_KEY = api_keys["openai"]
+    if api_keys.get("gemini"):
+        GEMINI_API_KEY = api_keys["gemini"]
+    if api_keys.get("tavily"):
+        TAVILY_API_KEY = api_keys["tavily"]
+
+def save_api_keys(keys: Dict[str, str]):
+    """
+    Speichert API-Keys in der persistenten Konfiguration.
+    Leere Strings werden ignoriert (behalten vorherigen Wert).
+    """
+    config = _load_config()
+    existing_keys = config.get("api_keys", {})
+    
+    # Nur nicht-leere Keys überschreiben
+    for provider, key in keys.items():
+        if key:  # Nur wenn nicht leer
+            existing_keys[provider] = key
+    
+    config["api_keys"] = existing_keys
+    _save_config(config)
+    
+    # Keys neu laden
+    reload_api_keys()
+
+def get_api_keys_masked() -> Dict[str, str]:
+    """
+    Gibt maskierte API-Keys zurück für die UI.
+    Zeigt nur die ersten 8 und letzten 4 Zeichen.
+    """
+    def mask(key: str) -> str:
+        if not key:
+            return ""
+        if len(key) <= 16:
+            return "•" * len(key)
+        return f"{key[:8]}{'•' * (len(key) - 12)}{key[-4:]}"
+    
+    return {
+        "anthropic": mask(ANTHROPIC_API_KEY),
+        "openai": mask(OPENAI_API_KEY),
+        "gemini": mask(GEMINI_API_KEY),
+        "tavily": mask(TAVILY_API_KEY),
+    }
+
+# Initial laden beim Import
+reload_api_keys()

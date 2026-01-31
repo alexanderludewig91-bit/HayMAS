@@ -12,7 +12,8 @@ from datetime import datetime
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import markdown
 from pathlib import Path
@@ -24,7 +25,10 @@ from config import (
     AGENT_MODELS,
     AVAILABLE_MODELS,
     validate_api_keys,
-    OUTPUT_DIR
+    OUTPUT_DIR,
+    reload_api_keys,
+    get_api_keys_masked,
+    save_api_keys,
 )
 from agents import (
     OrchestratorAgent,
@@ -38,17 +42,6 @@ from session_logger import get_log_for_article, list_all_logs, LOGS_DIR
 from mcp_server.server import get_mcp_server
 
 app = FastAPI(title="HayMAS API")
-
-
-@app.get("/")
-def root():
-    """Root endpoint"""
-    return {
-        "name": "HayMAS API",
-        "frontend": "http://localhost:5173",
-        "docs": "http://localhost:8000/docs",
-        "endpoints": ["/api/status", "/api/models", "/api/articles", "/api/analyze", "/api/generate"]
-    }
 
 
 # CORS für lokale Entwicklung
@@ -125,6 +118,59 @@ class GenerateRequest(BaseModel):
 def get_status():
     """API Key Status"""
     return validate_api_keys()
+
+
+# ============================================================================
+# SETTINGS / API KEYS
+# ============================================================================
+
+class ApiKeysRequest(BaseModel):
+    """Request zum Speichern von API Keys."""
+    anthropic: Optional[str] = None
+    openai: Optional[str] = None
+    gemini: Optional[str] = None
+    tavily: Optional[str] = None
+
+
+@app.get("/api/settings")
+def get_settings():
+    """
+    Gibt die aktuellen Einstellungen zurück.
+    API Keys werden maskiert angezeigt.
+    """
+    return {
+        "api_keys": get_api_keys_masked(),
+        "api_status": validate_api_keys(),
+    }
+
+
+@app.post("/api/settings/keys")
+def save_settings_keys(request: ApiKeysRequest):
+    """
+    Speichert API Keys in der persistenten Konfiguration.
+    Leere Werte werden ignoriert (behalten den vorherigen Key).
+    """
+    keys_to_save = {}
+    if request.anthropic:
+        keys_to_save["anthropic"] = request.anthropic
+    if request.openai:
+        keys_to_save["openai"] = request.openai
+    if request.gemini:
+        keys_to_save["gemini"] = request.gemini
+    if request.tavily:
+        keys_to_save["tavily"] = request.tavily
+    
+    if keys_to_save:
+        save_api_keys(keys_to_save)
+    
+    # Reload und Status zurückgeben
+    reload_api_keys()
+    
+    return {
+        "success": True,
+        "api_keys": get_api_keys_masked(),
+        "api_status": validate_api_keys(),
+    }
 
 
 @app.get("/api/models")
@@ -217,6 +263,46 @@ def get_article(filename: str):
         content = f.read()
     
     return {"filename": filename, "content": content}
+
+
+@app.delete("/api/articles/{filename}")
+def delete_article(filename: str):
+    """
+    Löscht einen Artikel aus dem Archiv.
+    """
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Artikel nicht gefunden")
+    
+    try:
+        os.remove(filepath)
+        return {"success": True, "message": f"Artikel '{filename}' gelöscht"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Löschen fehlgeschlagen: {str(e)}")
+
+
+@app.get("/api/articles/{filename}/download")
+def download_article(filename: str):
+    """
+    Artikel als Markdown-Datei herunterladen.
+    Triggert Browser-Download-Dialog.
+    """
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Artikel nicht gefunden")
+    
+    with open(filepath, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
 
 
 @app.get("/api/articles/{filename}/log")
@@ -908,6 +994,32 @@ def generate_article(request: GenerateRequest):
             "Connection": "keep-alive",
         }
     )
+
+
+# ============================================================================
+# STATIC FRONTEND (für Docker Container)
+# ============================================================================
+
+FRONTEND_DIST = Path(__file__).parent / "frontend" / "dist"
+
+if FRONTEND_DIST.exists():
+    # Built Frontend servieren (Docker/Production)
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST / "assets")), name="assets")
+    
+    @app.get("/")
+    def serve_frontend():
+        """Serve the frontend index.html"""
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
+    
+    @app.get("/{path:path}")
+    def serve_frontend_routes(path: str):
+        """Catch-all für SPA Routing"""
+        # Statische Dateien direkt servieren
+        file_path = FRONTEND_DIST / path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(str(file_path))
+        # Alles andere → index.html (SPA Routing)
+        return FileResponse(str(FRONTEND_DIST / "index.html"))
 
 
 if __name__ == "__main__":
